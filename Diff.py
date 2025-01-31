@@ -21,7 +21,7 @@ def compare_files(file1, file2):
         lines1 = f1.readlines()
         lines2 = f2.readlines()
     
-    diff = difflib.HtmlDiff().make_file(lines1, lines2, file1, file2)
+    diff = difflib.HtmlDiff(wrapcolumn=80).make_file(lines1, lines2, file1, file2)  # Limit column width
     
     return diff if lines1 != lines2 else None  # Only return if there's a difference
 
@@ -47,10 +47,34 @@ def compare_directories(dir1, dir2):
     generate_html_report(added_files, removed_files, modified_files)
 
 def generate_html_report(added, removed, modified):
-    """Generate an HTML report showing differences."""
+    """Generate an HTML report showing differences with word wrapping."""
     report_path = "version_diff_report.html"
     with open(report_path, "w", encoding="utf-8") as f:
-        f.write("<html><head><title>Software Version Comparison</title></head><body>")
+        f.write("<html><head><title>Software Version Comparison</title>")
+        
+        # Add CSS styles for word wrap and width limitation
+        f.write("""
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; }
+            h1 { color: #333; text-align: center; }
+            h2 { color: #444; margin-top: 20px; }
+            ul { background: #f9f9f9; padding: 10px; border-radius: 5px; }
+            li { font-size: 14px; margin: 5px 0; }
+            .diff-container { 
+                max-width: 900px;  /* Limit width */
+                overflow-x: auto;  /* Scroll if too wide */
+                background: #fff; 
+                border: 1px solid #ddd;
+                padding: 10px;
+                margin-top: 10px;
+                word-wrap: break-word; /* Wrap long lines */
+                white-space: pre-wrap; /* Preserve formatting */
+            }
+            hr { border: 0; height: 1px; background: #ccc; margin: 20px 0; }
+        </style>
+        </head><body>
+        """)
+        
         f.write("<h1>Software Version Comparison</h1>")
         
         # Added files
@@ -72,8 +96,9 @@ def generate_html_report(added, removed, modified):
             f.write("<h2>Modified Files</h2>")
             for file, diff_html in modified.items():
                 f.write(f"<h3>📝 {file}</h3>")
-                f.write(diff_html)
-                f.write("<hr>")
+                f.write('<div class="diff-container">')
+                f.write(diff_html)  # Embed the formatted HTML diff
+                f.write("</div><hr>")
 
         f.write("</body></html>")
 
