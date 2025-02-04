@@ -5,43 +5,90 @@
 SetBatchLines, -1
 OnExit, ExitScript
 
-If !pToken := Gdip_Startup()
-{
-    MsgBox, GDI+ failed to start.
-    ExitApp
-}
+global hwnd := ""
+global grayscaleActive := false
 
-WinGet, hwnd, ID, A  ; Get active window's handle
-SetTimer, ApplyGrayscale, 50
+F6::
+    ; Change this to match your target window's title
+    targetWinTitle := "Notepad"  ; Change "Notepad" to your desired window
+
+    ; Get window handle by title
+    WinGet, hwnd, ID, %targetWinTitle%
+
+    If !hwnd
+    {
+        MsgBox, Window not found: %targetWinTitle%
+        Return
+    }
+
+    grayscaleActive := !grayscaleActive
+
+    If (grayscaleActive)
+    {
+        If !pToken := Gdip_Startup()
+        {
+            MsgBox, GDI+ failed to start.
+            ExitApp
+        }
+        SetTimer, ApplyGrayscale, 50
+    }
+    Else
+    {
+        SetTimer, ApplyGrayscale, Off
+        RestoreOriginal(hwnd)
+    }
 Return
 
 ApplyGrayscale:
     If !WinExist("ahk_id " hwnd)
-        ExitApp  ; Close script if window disappears
-    
-    hbm := Gdip_BitmapFromHWND(hwnd)
-    pBitmap := Gdip_CreateBitmapFromHBITMAP(hbm)
-    
-    ; Apply grayscale effect
-    Gdip_LockBits(pBitmap, 0, 0, w, h, stride, scan0, 1, 3)
-    Loop, % (w * h)
     {
-        pixel := NumGet(scan0 + (A_Index - 1) * 4, 0, "UInt")
-        r := (pixel & 0xFF)
-        g := (pixel >> 8) & 0xFF
-        b := (pixel >> 16) & 0xFF
-        gray := (r * 0.3 + g * 0.59 + b * 0.11)
-        NumPut(gray | (gray << 8) | (gray << 16), scan0 + (A_Index - 1) * 4, 0, "UInt")
+        grayscaleActive := false
+        SetTimer, ApplyGrayscale, Off
+        RestoreOriginal(hwnd)
+        Return
     }
-    Gdip_UnlockBits(pBitmap)
-    
-    ; Update window with grayscale bitmap
+
+    hbm := Gdip_BitmapFromHWND(hwnd)
+    If !hbm
+        Return
+
+    pBitmap := Gdip_CreateBitmapFromHBITMAP(hbm)
+    w := Gdip_GetImageWidth(pBitmap)
+    h := Gdip_GetImageHeight(pBitmap)
+
+    ; Prepare BitmapData structure
+    VarSetCapacity(BitmapData, 24, 0)
+
+    ; Lock bitmap for direct pixel manipulation
+    If !Gdip_LockBits(pBitmap, 0, 0, w, h, stride, scan0, BitmapData, 1, 3)
+    {
+        Loop, % (w * h)
+        {
+            pixel := NumGet(scan0 + (A_Index - 1) * 4, 0, "UInt")
+            r := (pixel & 0xFF)
+            g := (pixel >> 8) & 0xFF
+            b := (pixel >> 16) & 0xFF
+            gray := (r * 0.3 + g * 0.59 + b * 0.11)
+            NumPut(gray | (gray << 8) | (gray << 16), scan0 + (A_Index - 1) * 4, 0, "UInt")
+        }
+        ; Unlock bits correctly
+        Gdip_UnlockBits(pBitmap, BitmapData)
+    }
+
+    ; Apply grayscale image
     hbmNew := Gdip_CreateHBITMAPFromBitmap(pBitmap)
     SendMessage, 0x172, hbmNew, 0,, ahk_id %hwnd%
-    
+
+    ; Cleanup
     DeleteObject(hbm)
     Gdip_DisposeImage(pBitmap)
 Return
+
+RestoreOriginal(hwnd)
+{
+    If hwnd
+        RedrawWindow(hwnd)
+}
 
 ExitScript:
     Gdip_Shutdown(pToken)
