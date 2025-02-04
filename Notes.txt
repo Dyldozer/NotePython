@@ -1,0 +1,48 @@
+#Persistent
+#SingleInstance, Force
+#Include Gdip_All.ahk
+
+SetBatchLines, -1
+OnExit, ExitScript
+
+If !pToken := Gdip_Startup()
+{
+    MsgBox, GDI+ failed to start.
+    ExitApp
+}
+
+WinGet, hwnd, ID, A  ; Get active window's handle
+SetTimer, ApplyGrayscale, 50
+Return
+
+ApplyGrayscale:
+    If !WinExist("ahk_id " hwnd)
+        ExitApp  ; Close script if window disappears
+    
+    hbm := Gdip_BitmapFromHWND(hwnd)
+    pBitmap := Gdip_CreateBitmapFromHBITMAP(hbm)
+    
+    ; Apply grayscale effect
+    Gdip_LockBits(pBitmap, 0, 0, w, h, stride, scan0, 1, 3)
+    Loop, % (w * h)
+    {
+        pixel := NumGet(scan0 + (A_Index - 1) * 4, 0, "UInt")
+        r := (pixel & 0xFF)
+        g := (pixel >> 8) & 0xFF
+        b := (pixel >> 16) & 0xFF
+        gray := (r * 0.3 + g * 0.59 + b * 0.11)
+        NumPut(gray | (gray << 8) | (gray << 16), scan0 + (A_Index - 1) * 4, 0, "UInt")
+    }
+    Gdip_UnlockBits(pBitmap)
+    
+    ; Update window with grayscale bitmap
+    hbmNew := Gdip_CreateHBITMAPFromBitmap(pBitmap)
+    SendMessage, 0x172, hbmNew, 0,, ahk_id %hwnd%
+    
+    DeleteObject(hbm)
+    Gdip_DisposeImage(pBitmap)
+Return
+
+ExitScript:
+    Gdip_Shutdown(pToken)
+    ExitApp
