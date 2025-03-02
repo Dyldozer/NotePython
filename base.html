@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        h1 {
+            color: #2c3e50;
+            margin-top: 0;
+            font-size: 24px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .input-group {
+            margin-bottom: 15px;
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+            width: 100%;
+        }
+        .input-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+            width: 100%;
+        }
+        .input-col {
+            flex: 1;
+        }
+        input[type='text'] {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: none;
+            box-sizing: border-box;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        .buttons-container {
+            margin-top: 20px;
+        }
+        .category-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eee;
+        }
+        .notes-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+        button {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        .category-btn {
+            background-color: #ecf0f1;
+            color: #2c3e50;
+        }
+        .category-btn.active {
+            background-color: #3498db;
+            color: white;
+        }
+        .note-btn {
+            background-color: #f0f0f0;
+            color: #333;
+        }
+        .note-btn:hover {
+            background-color: #e0e0e0;
+        }
+        .action-btn {
+            padding: 10px 20px;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        .copy-btn {
+            background-color: #2ecc71;
+            color: white;
+        }
+        .copy-btn:hover {
+            background-color: #27ae60;
+        }
+        .clear-btn {
+            background-color: #e74c3c;
+            color: white;
+        }
+        .clear-btn:hover {
+            background-color: #c0392b;
+        }
+        .action-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .title-bar {
+      padding: 0.35em 0.5em;
+      flex-grow: 1;
+    }
+
+    .title-btn {
+      padding: 0.35em 1.0em;
+      cursor: pointer;
+      vertical-align: bottom;
+      font-family: Webdings;
+      font-size: 11pt;
+    }
+
+    .title-btn:hover {
+      background: rgba(0, 0, 0, .2);
+    }
+
+    .title-btn-close:hover {
+      background: #dc3545;
+    }
+    </style>
+</head>
+<body>
+
+      <!-- Title Bar -->
+  <header>
+    <span class="title-bar" onmousedown="neutron.DragTitleBar()">Neutron</span>
+    <span class="title-btn" onclick="neutron.Minimize()">0</span>
+    <span class="title-btn" onclick="neutron.Maximize()">1</span>
+    <span class="title-btn title-btn-close" onclick="neutron.Close()">r</span>
+  </header>
+
+    <div class="container">
+        <h1>Call Notes</h1>
+        
+        <div class="input-row">
+            <div class="input-col">
+                <label for="tecId">Technician ID</label>
+                <input type="text" id="tecId" placeholder="Enter Tech ID">
+            </div>
+            <div class="input-col">
+                <label for="jobNumber">Job Number</label>
+                <input type="text" id="jobNumber" placeholder="Enter Job Number">
+            </div>
+        </div>
+        
+        <div class="input-row">
+            <div class="input-col">
+                <label for="callbackNumber">Callback Number</label>
+                <input type="text" id="callbackNumber" placeholder="Enter Callback Number">
+            </div>
+            <div class="input-col">
+                <label for="accountNumber">Account Number</label>
+                <input type="text" id="accountNumber" placeholder="Enter Account Number">
+            </div>
+        </div>
+        
+        <div class="input-group">
+            <label for="mainNotes">Notes</label>
+            <textarea id="mainNotes" placeholder="Enter call notes here"></textarea>
+        </div>
+        
+        <div class="input-group">
+            <label for="notCopiedNotes">Notes (Not Copied)</label>
+            <textarea id="notCopiedNotes" placeholder="Enter private notes here (will not be copied)"></textarea>
+        </div>
+        
+        <div class="buttons-container">
+            <div class="category-buttons" id="categoryButtons">
+                <button class="category-btn active" data-category="General">General</button>
+                <button class="category-btn" data-category="Technical">Technical</button>
+                <button class="category-btn" data-category="Billing">Billing</button>
+                <button class="category-btn" data-category="Hardware">Hardware</button>
+                <button class="category-btn" data-category="Software">Software</button>
+                <button class="category-btn" data-category="Network">Network</button>
+                <button class="category-btn" data-category="Account">Account</button>
+                <button class="category-btn" data-category="Service">Service</button>
+                <button class="category-btn" data-category="Warranty">Warranty</button>
+                <button class="category-btn" data-category="Other">Other</button>
+            </div>
+            
+            <div class="notes-buttons" id="notesButtons">
+                <!-- Note buttons will be dynamically populated based on category -->
+            </div>
+            
+            <div class="action-buttons">
+                <button class="action-btn copy-btn" id="copyBtn">Copy Notes</button>
+                <button class="action-btn clear-btn" id="clearBtn">Clear All</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Define notes templates for each category
+        const noteTemplates = {
+            "General": [
+                "Customer called for assistance.",
+                "Issue resolved during the call.",
+                "Escalated to supervisor.",
+                "Follow-up scheduled.",
+                "Customer satisfied with resolution.",
+                "Sent email confirmation.",
+                "Provided knowledge base article.",
+                "Verified account information.",
+                "Customer will call back later.",
+                "No further action required.",
+                "Documented issue in system.",
+                "Customer was informed of policy."
+            ],
+            "Technical": [
+                "Performed troubleshooting steps.",
+                "Rebooted system.",
+                "Updated drivers.",
+                "Cleared cache.",
+                "Ran diagnostics.",
+                "Installed latest patches.",
+                "Disabled conflicting applications.",
+                "Restored default settings.",
+                "Performed system scan.",
+                "Detected hardware error.",
+                "No errors found during testing.",
+                "Instructed on using safe mode."
+            ],
+            "Billing": [
+                "Reviewed billing history.",
+                "Applied credit to account.",
+                "Explained charges on statement.",
+                "Updated payment method.",
+                "Set up payment plan.",
+                "Processed refund.",
+                "Waived late fee.",
+                "Verified recent payments.",
+                "Adjusted recurring charges.",
+                "Updated billing address.",
+                "Sent invoice copy to customer.",
+                "Applied promotional discount."
+            ],
+            "Hardware": [
+                "Verified hardware compatibility.",
+                "Confirmed device is under warranty.",
+                "Scheduled hardware replacement.",
+                "Provided RMA number.",
+                "Instructed on proper installation.",
+                "Diagnosed faulty component.",
+                "Recommended hardware upgrade.",
+                "Checked firmware version.",
+                "Verified serial number.",
+                "Explained hardware limitations.",
+                "Provided maintenance instructions.",
+                "Checked for physical damage."
+            ],
+            "Software": [
+                "Verified software version.",
+                "Provided license key.",
+                "Instructed on software update.",
+                "Uninstalled/reinstalled application.",
+                "Cleared application data.",
+                "Reset user preferences.",
+                "Checked for software conflicts.",
+                "Verified system requirements.",
+                "Escalated to developer team.",
+                "Added feature to roadmap.",
+                "Explained known limitations.",
+                "Applied software patch."
+            ],
+            "Network": [
+                "Checked network connectivity.",
+                "Reset network equipment.",
+                "Verified IP configuration.",
+                "Checked firewall settings.",
+                "Performed speed test.",
+                "Updated network drivers.",
+                "Checked DNS settings.",
+                "Verified WiFi signal strength.",
+                "Reset network password.",
+                "Checked for internet outages.",
+                "Recommended network upgrade.",
+                "Verified VPN connection."
+            ],
+            "Account": [
+                "Updated account information.",
+                "Reset account password.",
+                "Verified security questions.",
+                "Updated email address.",
+                "Explained account restrictions.",
+                "Upgraded account type.",
+                "Added authorized user.",
+                "Enabled two-factor authentication.",
+                "Reviewed account history.",
+                "Updated communication preferences.",
+                "Verified account ownership.",
+                "Requested identity verification."
+            ],
+            "Service": [
+                "Scheduled service appointment.",
+                "Updated service address.",
+                "Explained service options.",
+                "Confirmed service availability.",
+                "Upgraded service plan.",
+                "Waived service fee.",
+                "Rescheduled missed appointment.",
+                "Expedited service request.",
+                "Extended service hours.",
+                "Provided service timeframe.",
+                "Checked service history.",
+                "Explained service guarantee."
+            ],
+            "Warranty": [
+                "Verified warranty status.",
+                "Extended warranty period.",
+                "Explained warranty coverage.",
+                "Processed warranty claim.",
+                "Documented warranty exception.",
+                "Provided proof of purchase requirements.",
+                "Expedited warranty service.",
+                "Offered extended warranty options.",
+                "Explained manufacturer warranty.",
+                "Documented serial number for warranty.",
+                "Verified warranty transfer.",
+                "Processed warranty replacement."
+            ],
+            "Other": [
+                "Documented special request.",
+                "Provided company contact information.",
+                "Directed to online resources.",
+                "Explained company policy.",
+                "Transferred to appropriate department.",
+                "Documented customer feedback.",
+                "Provided supervisor contact information.",
+                "Verified account special notes.",
+                "Added comment to account history.",
+                "Suggested alternative solution.",
+                "Created documentation request.",
+                "Updated customer preferences."
+            ]
+        };
+
+        // Function to update note buttons based on selected category
+        function updateNoteButtons(category) {
+            const notesContainer = document.getElementById('notesButtons');
+            notesContainer.innerHTML = '';
+            
+            const notes = noteTemplates[category];
+            notes.forEach(note => {
+                const button = document.createElement('button');
+                button.className = 'note-btn';
+                button.textContent = note;
+                button.onclick = function() {
+                    const textarea = document.getElementById('mainNotes');
+                    textarea.value += (textarea.value ? "\n" : "") + note;
+                };
+                notesContainer.appendChild(button);
+            });
+            
+            // Update active category button
+            document.querySelectorAll('.category-btn').forEach(btn => {
+                btn.classList.remove('active');
+                if (btn.getAttribute('data-category') === category) {
+                    btn.classList.add('active');
+                }
+            });
+            
+            // Tell AHK the category changed
+            neutron.ahk.categoryChanged(category);
+        }
+
+        // Set up category buttons
+        document.querySelectorAll('.category-btn').forEach(button => {
+            button.addEventListener('click', function() {
+                const category = this.getAttribute('data-category');
+                updateNoteButtons(category);
+            });
+        });
+
+        // Set up copy button
+        document.getElementById('copyBtn').addEventListener('click', function() {
+            const tecId = document.getElementById('tecId').value;
+            const jobNumber = document.getElementById('jobNumber').value;
+            const callbackNumber = document.getElementById('callbackNumber').value;
+            const accountNumber = document.getElementById('accountNumber').value;
+            const notes = document.getElementById('mainNotes').value;
+            
+            neutron.ahk.copyNotes(tecId, jobNumber, callbackNumber, accountNumber, notes);
+        });
+
+        // Set up clear button
+        document.getElementById('clearBtn').addEventListener('click', function() {
+            document.getElementById('tecId').value = '';
+            document.getElementById('jobNumber').value = '';
+            document.getElementById('callbackNumber').value = '';
+            document.getElementById('accountNumber').value = '';
+            document.getElementById('mainNotes').value = '';
+            document.getElementById('notCopiedNotes').value = '';
+            neutron.ahk.clearFields();
+        });
+
+        // Initialize with General category
+        updateNoteButtons('General');
+    </script>
+</body>
+</html>
