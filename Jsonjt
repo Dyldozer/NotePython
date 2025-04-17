@@ -1,0 +1,53 @@
+I'll create a Python script to parse this JSON and return channel names where "sdv" equals 1, along with their parent object names. Looking at your example, I noticed the JSON has some syntax issues (missing commas and braces), so I'll make a script that can handle a proper JSON format.
+
+```python
+import json
+
+def parse_channels_with_sdv_1(json_data):
+    """
+    Parse JSON and find all channels with sdv=1
+    Returns a list of tuples: (parent_object_name, channel_name)
+    """
+    results = []
+    data = json.loads(json_data)
+    
+    # Navigate through the nested structure
+    if "dsg stats" in data and "ch map" in data["dsg stats"]:
+        ch_map = data["dsg stats"]["ch map"]
+        
+        # First level - typically "vcn"
+        for parent1_name, parent1_value in ch_map.items():
+            # Second level - channel IDs like "0001", "0002", etc.
+            for channel_id, channel_info in parent1_value.items():
+                # Check if the channel has sdv=1
+                if "sdv" in channel_info and channel_info["sdv"] == 1:
+                    if "name" in channel_info:
+                        results.append((parent1_name, channel_info["name"]))
+    
+    return results
+
+def main():
+    # You can load your JSON from a file
+    try:
+        with open('channels.json', 'r') as file:
+            json_data = file.read()
+            
+        channels = parse_channels_with_sdv_1(json_data)
+        
+        if channels:
+            print("Channels with sdv=1:")
+            for parent, name in channels:
+                print(f"Parent: {parent}, Channel: {name}")
+        else:
+            print("No channels found with sdv=1")
+            
+    except FileNotFoundError:
+        print("File not found. Please ensure 'channels.json' exists.")
+    except json.JSONDecodeError as e:
+        print(f"JSON parsing error: {e}")
+        
+if __name__ == "__main__":
+    main()
+```
+
+Would you like me to explain or break down this code?
