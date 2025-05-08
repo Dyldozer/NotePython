@@ -1,161 +1,38 @@
-I can help you create a script that will parse your historical data and generate a graph showing task trends. Since you mentioned not using external libraries, we'll need to create a simple visualization approach. Here's how to parse the data and create a basic graph:
+I can help you create a script that converts dates in your specific format. Here's a simple Python script that will do the job:
 
 ```python
-import csv
-import os
-from datetime import datetime
+import re
+import datetime
 
-def parse_historical_data(history_file_path):
-    """Parse the historical data file with the specific format."""
-    data = {}  # Dictionary to store task data by date
-    current_date = None
+def convert_date_format(input_file, output_file):
+    with open(input_file, 'r') as file:
+        content = file.readlines()
     
-    with open(history_file_path, 'r') as file:
-        for line in file:
-            line = line.strip()
+    converted_content = []
+    for line in content:
+        # Check if the line contains ~~~~yyMMdd-HHmmss~~~~
+        match = re.search(r'~~~~(\d{2})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})~~~~', line)
+        if match:
+            # Extract date components
+            yy, MM, dd, HH, mm, ss = match.groups()
             
-            # Check if this is a date line
-            if line.startswith('~~~~') and line.endswith('~~~~'):
-                current_date = line.strip('~')
-                data[current_date] = []
-            elif current_date and ',' in line:
-                # This is a task data line
-                task_data = line.split(',')
-                if len(task_data) == 5:
-                    task_name = task_data[0]
-                    task_new = int(task_data[1])
-                    task_hold = int(task_data[2])
-                    task_inprogress = int(task_data[3])
-                    task_total = int(task_data[4])
-                    
-                    data[current_date].append({
-                        'task': task_name,
-                        'new': task_new,
-                        'hold': task_hold,
-                        'inprogress': task_inprogress,
-                        'total': task_total
-                    })
-    
-    return data
-
-def organize_data_by_task(historical_data):
-    """Reorganize data by task for easier trend analysis."""
-    task_data = {}
-    
-    for date, tasks in historical_data.items():
-        for task in tasks:
-            task_name = task['task']
+            # Create the new format ~~~~MM/dd/yy-HH:mm~~~~
+            new_format = f"~~~~{MM}/{dd}/{yy}-{HH}:{mm}~~~~"
             
-            if task_name not in task_data:
-                task_data[task_name] = {
-                    'dates': [],
-                    'new': [],
-                    'hold': [],
-                    'inprogress': [],
-                    'total': []
-                }
-            
-            task_data[task_name]['dates'].append(date)
-            task_data[task_name]['new'].append(task['new'])
-            task_data[task_name]['hold'].append(task['hold'])
-            task_data[task_name]['inprogress'].append(task['inprogress'])
-            task_data[task_name]['total'].append(task['total'])
+            # Replace the old format with the new one
+            line = re.sub(r'~~~~\d{6}-\d{6}~~~~', new_format, line)
+        
+        converted_content.append(line)
     
-    return task_data
-
-def create_ascii_graph(task_data, statistic='total'):
-    """Create a simple ASCII graph for each task."""
-    width = 60  # Width of the graph
+    with open(output_file, 'w') as file:
+        file.writelines(converted_content)
     
-    for task_name, data in task_data.items():
-        values = data[statistic]
-        if not values:
-            continue
-            
-        min_val = min(values)
-        max_val = max(values)
-        range_val = max_val - min_val
-        
-        # Avoid division by zero
-        if range_val == 0:
-            range_val = 1
-        
-        print(f"\nTrend for {task_name} - {statistic.upper()}:")
-        print("-" * 70)
-        
-        for i, (date, value) in enumerate(zip(data['dates'], values)):
-            # Calculate position on the graph
-            if range_val > 0:
-                bar_length = int(((value - min_val) / range_val) * width)
-            else:
-                bar_length = 1
-                
-            print(f"{date}: {value} {'█' * bar_length}")
-        
-        print("-" * 70)
+    print(f"Conversion complete. Output saved to {output_file}")
 
-def save_data_to_csv_for_excel(task_data, output_file):
-    """Save the task data to a CSV file that can be imported into Excel for graphing."""
-    # Get all unique tasks and dates
-    all_tasks = list(task_data.keys())
-    all_dates = set()
-    for task in all_tasks:
-        all_dates.update(task_data[task]['dates'])
-    all_dates = sorted(list(all_dates))
-    
-    # Create the CSV file
-    with open(output_file, 'w', newline='') as csvfile:
-        writer = csv.writer(csvfile)
-        
-        # Write header row
-        header = ['Date']
-        for task in all_tasks:
-            header.extend([f"{task}_new", f"{task}_hold", f"{task}_inprogress", f"{task}_total"])
-        writer.writerow(header)
-        
-        # Write data rows
-        for date in all_dates:
-            row = [date]
-            for task in all_tasks:
-                if date in task_data[task]['dates']:
-                    index = task_data[task]['dates'].index(date)
-                    row.extend([
-                        task_data[task]['new'][index],
-                        task_data[task]['hold'][index],
-                        task_data[task]['inprogress'][index],
-                        task_data[task]['total'][index]
-                    ])
-                else:
-                    # Fill with empty values if no data for this date
-                    row.extend(['', '', '', ''])
-            writer.writerow(row)
-    
-    print(f"Data saved to {output_file}. You can now import this into Excel to create graphs.")
-
-# Main execution
-history_file_path = 'tasks_history.txt'  # Path to your historical data file
-excel_output_path = 'task_trends.csv'    # Path for Excel-compatible output
-
-# Parse the historical data
-historical_data = parse_historical_data(history_file_path)
-task_data = organize_data_by_task(historical_data)
-
-# Create simple ASCII graphs for quick visualization
-for stat in ['new', 'hold', 'inprogress', 'total']:
-    create_ascii_graph(task_data, stat)
-
-# Save data for Excel graphing
-save_data_to_csv_for_excel(task_data, excel_output_path)
+# Example usage
+input_file = "your_input_file.txt"
+output_file = "converted_file.txt"
+convert_date_format(input_file, output_file)
 ```
 
-Would you like me to explain how this script works? It creates:
-
-1. A simple ASCII graph in the console so you can see trends quickly
-2. A CSV file formatted for Excel that you can use to create proper charts
-
-To make graphs in Excel after running this script:
-1. Open Excel
-2. Import the CSV file (task_trends.csv)
-3. Select the data you want to visualize
-4. Go to Insert > Charts and choose the chart type you want
-5. Customize the chart as needed
+Would you like me to explain how this script works?
