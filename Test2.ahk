@@ -1,55 +1,93 @@
+Here's a script using chrome.ahk that will open a headless Chrome instance and make REST API calls:
+
+```autohotkey
+#NoEnv
 #SingleInstance Force
-SetWorkingDir %A_ScriptDir%
-SetBatchLines -1
+#Include chrome.ahk
 
+; Initialize headless Chrome instance
+ChromeInst := new Chrome("", "--headless --disable-gpu --no-sandbox --disable-web-security")
 
-SplashScreenCreate("NFS Notes", "v1.0", "Script is starting...", "Automation - Efficiency - Accuracy", 5000)
+; Wait for Chrome to start
+Sleep, 2000
 
+; Create a new page
+Page := ChromeInst.GetPage()
 
-SplashScreenCreate(title, version, message, tagline := "", duration := 3000) {
-
-    SysGet, MonitorWorkArea, MonitorWorkArea
-    screenWidth := MonitorWorkAreaRight - MonitorWorkAreaLeft
-    screenHeight := MonitorWorkAreaBottom - MonitorWorkAreaTop
+; Function to make REST API calls
+MakeRestCall(Page, Method, URL, Headers := "", Body := "") {
+    ; Construct JavaScript code to make the API call
+    JSCode := "
+    (
+    fetch('" . URL . "', {
+        method: '" . Method . "',
+        headers: " . (Headers ? Headers : "{}") . ",
+        " . (Body ? "body: '" . Body . "'," : "") . "
+    })
+    .then(response => response.text())
+    .then(data => {
+        document.body.innerHTML = data;
+        return data;
+    })
+    .catch(error => {
+        document.body.innerHTML = 'Error: ' + error;
+        return 'Error: ' + error;
+    });
+    )"
     
-
-    Gui, Splash:New, +AlwaysOnTop +ToolWindow -SysMenu -Caption +Border
-    Gui, Splash:Color, cddbf9
+    ; Execute the JavaScript
+    Page.Evaluate(JSCode)
     
-
-    Gui, Splash:Font, s16 bold, Arial
-    Gui, Splash:Add, Text, x60 y10 w300 Center, %title%
-
-
-    Gui, Splash:Font, s10 normal, Arial
-    Gui, Splash:Add, Text, x60 y40 w300 Center, %version%
+    ; Wait for response
+    Sleep, 2000
     
-
-    Gui, Splash:Add, Text, x10 y65 w300 h1 0x10 Center, 
-    
-
-    Gui, Splash:Font, s10, Arial
-    Gui, Splash:Add, Text, x60 y75 w300 Center, %message%
-    
-    if (tagline != "") {
-        Gui, Splash:Font, s9 italic, Arial
-        Gui, Splash:Add, Text, x60 y100 w300 Center cBlue, %tagline%
-    }
-    Gui, Splash:Add, Picture, x10 y20, spectrum.png
-
-    Gui, Splash:Show, Hide, Splash Screen
-    Gui, Splash:+LastFound
-    WinGetPos,,, width, height
-    xPos := (screenWidth - width) / 2
-    yPos := (screenHeight - height) / 2
-    
-    Gui, Splash:Show, x%xPos% y%yPos% w320 h140, Splash Screen
-    
-    SetTimer, CloseSplash, %duration%
-    return
-    
-    CloseSplash:
-        Gui, Splash:Destroy
-        SetTimer, CloseSplash, Off
-        return
+    ; Get the response from the page body
+    Result := Page.Evaluate("document.body.innerHTML").value
+    return Result
 }
+
+; Example usage - GET request
+GetResponse := MakeRestCall(Page, "GET", "https://jsonplaceholder.typicode.com/posts/1")
+MsgBox, GET Response: %GetResponse%
+
+; Example usage - POST request with JSON data
+PostHeaders := "{'Content-Type': 'application/json'}"
+PostBody := "{\"title\": \"Test Post\", \"body\": \"This is a test\", \"userId\": 1}"
+PostResponse := MakeRestCall(Page, "POST", "https://jsonplaceholder.typicode.com/posts", PostHeaders, PostBody)
+MsgBox, POST Response: %PostResponse%
+
+; Example usage - PUT request
+PutHeaders := "{'Content-Type': 'application/json'}"
+PutBody := "{\"id\": 1, \"title\": \"Updated Post\", \"body\": \"Updated content\", \"userId\": 1}"
+PutResponse := MakeRestCall(Page, "PUT", "https://jsonplaceholder.typicode.com/posts/1", PutHeaders, PutBody)
+MsgBox, PUT Response: %PutResponse%
+
+; Example usage - DELETE request
+DeleteResponse := MakeRestCall(Page, "DELETE", "https://jsonplaceholder.typicode.com/posts/1")
+MsgBox, DELETE Response: %DeleteResponse%
+
+; Close Chrome when done
+ChromeInst.Kill()
+ExitApp
+```
+
+Key features of this script:
+
+**Headless Setup**: Chrome launches with `--headless`, `--disable-gpu`, `--no-sandbox`, and `--disable-web-security` flags to run invisibly and allow cross-origin requests.
+
+**REST Methods**: The `MakeRestCall` function supports GET, POST, PUT, DELETE, and other HTTP methods.
+
+**Headers & Body**: You can pass custom headers and request body data for POST/PUT requests.
+
+**Response Handling**: The function returns the response text from the API calls.
+
+**Error Handling**: Basic error handling is included in the JavaScript fetch call.
+
+You can customize this further by:
+- Adding authentication headers (Bearer tokens, API keys, etc.)
+- Implementing more sophisticated error handling
+- Adding request timeouts
+- Storing responses to files instead of showing message boxes
+- Creating a loop to make multiple API calls
+
+The script runs completely in the background without any visible browser windows, making it perfect for automated API testing or data collection tasks.
