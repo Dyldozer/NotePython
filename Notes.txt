@@ -1,38 +1,40 @@
-I can help you create a script that converts dates in your specific format. Here's a simple Python script that will do the job:
 
-```python
-import re
-import datetime
 
-def convert_date_format(input_file, output_file):
-    with open(input_file, 'r') as file:
-        content = file.readlines()
+; Your JSON string (assuming it's stored in a variable called jsonString)
+jsonString := "your_json_here"  ; Replace with your actual JSON
+
+; Parse the JSON
+jsonData := Jxon_Load(jsonString)
+
+; Initialize arrays
+accountUcmPairs := {}  ; Object to store account number -> UCM ticket number pairs
+regionCounts := {}     ; Object to store region -> count
+
+; Loop through each item in the JSON array
+for index, item in jsonData {
+    ; Extract the required fields
+    region := item.etdRegion
+    accountNumber := item.accountNumber
+    ucmTicketNumber := item.ucmTicketNumber
     
-    converted_content = []
-    for line in content:
-        # Check if the line contains ~~~~yyMMdd-HHmmss~~~~
-        match = re.search(r'~~~~(\d{2})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})~~~~', line)
-        if match:
-            # Extract date components
-            yy, MM, dd, HH, mm, ss = match.groups()
-            
-            # Create the new format ~~~~MM/dd/yy-HH:mm~~~~
-            new_format = f"~~~~{MM}/{dd}/{yy}-{HH}:{mm}~~~~"
-            
-            # Replace the old format with the new one
-            line = re.sub(r'~~~~\d{6}-\d{6}~~~~', new_format, line)
-        
-        converted_content.append(line)
+    ; Add account number and UCM ticket number pair to array
+    accountUcmPairs[accountNumber] := ucmTicketNumber
     
-    with open(output_file, 'w') as file:
-        file.writelines(converted_content)
-    
-    print(f"Conversion complete. Output saved to {output_file}")
+    ; Increment region count or initialize to 1
+    if (regionCounts.HasKey(region)) {
+        regionCounts[region]++
+    } else {
+        regionCounts[region] := 1
+    }
+}
 
-# Example usage
-input_file = "your_input_file.txt"
-output_file = "converted_file.txt"
-convert_date_format(input_file, output_file)
-```
+; Display results (optional - for testing)
+MsgBox, Account-UCM Pairs:`n
+for account, ucm in accountUcmPairs {
+    MsgBox, Account: %account% -> UCM: %ucm%
+}
 
-Would you like me to explain how this script works?
+MsgBox, Region Counts:`n
+for region, count in regionCounts {
+    MsgBox, Region: %region% -> Count: %count%
+}This script will:Parse your JSON using Jxon_Load()Loop through each object in the JSON arrayExtract the etdRegion, accountNumber, and ucmTicketNumber from each itemStore account number and UCM ticket number pairs in the accountUcmPairs objectCount occurrences of each region in the regionCounts object, incrementing existing regions or adding new ones with a count of 1Based on your JSON sample, you'd get:Account-UCM pairs: 83999999948 -> 33333612 and 835199999999245 -> 912222280Region counts: Mid-South -> 2 (since both items have "Mid-South" as their etdRegion)You can access the results using accountUcmPairs[accountNumber] and regionCounts[regionName] later in your script.
