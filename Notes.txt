@@ -1,39 +1,45 @@
-; Converts ISO8601 UTC datetime (with Z) into local time
-; Example input: 2025-08-20T15:30:00Z
+; Returns an object with OneDrive sign-in status
+; Example:
+; result := IsOneDriveSignedIn()
+; if (result.HasPersonal)
+;     MsgBox, Personal OneDrive signed in as % result.PersonalEmail
+; if (result.HasBusiness)
+;     MsgBox, Business OneDrive signed in as % result.BusinessEmail
+; if (!result.HasPersonal && !result.HasBusiness)
+;     MsgBox, No OneDrive accounts signed in
 
-ConvertISO8601ToLocal(iso) {
-    ; Match YYYY-MM-DDTHH:MM:SSZ
-    if RegExMatch(iso, "(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?Z", m) {
-        yyyy := m1, mm := m2, dd := m3
-        hh := m4, mi := m5, ss := (m6 ? m6 : "00")
+IsOneDriveSignedIn() {
+    result := {}
 
-        ; Build UTC timestamp (AHK YYYYMMDDHH24MISS)
-        utcTime := yyyy . mm . dd . hh . mi . ss
-
-        ; Convert to local
-        localFileTime := UTCtoLocal(utcTime)
-
-        ; Format output nicely
-        FormatTime, out, %localFileTime%, yyyy-MM-dd HH:mm:ss
-        return out
+    ; --- Personal Account ---
+    RegRead, personalEmail, HKEY_CURRENT_USER\Software\Microsoft\OneDrive\Accounts\Personal, UserEmail
+    if !(ErrorLevel || personalEmail = "")
+    {
+        result.HasPersonal := true
+        result.PersonalEmail := personalEmail
     }
-    return ""
+    else
+        result.HasPersonal := false
+
+    ; --- Business / Work Accounts ---
+    ; Business accounts are stored under ...\Accounts\Business1, Business2, etc.
+    businessFound := false
+    Loop
+    {
+        key := "HKEY_CURRENT_USER\Software\Microsoft\OneDrive\Accounts\Business" . A_Index
+        RegRead, businessEmail, %key%, UserEmail
+        if (ErrorLevel != 0)
+            break ; no more BusinessX keys
+        if (businessEmail != "")
+        {
+            result.HasBusiness := true
+            result.BusinessEmail := businessEmail
+            businessFound := true
+            break ; if you only need the first, remove break to collect all
+        }
+    }
+    if (!businessFound)
+        result.HasBusiness := false
+
+    return result
 }
-
-UTCtoLocal(utcTime) {
-    ; AHK interprets times as local by default,
-    ; so we adjust by calculating offset between local and UTC
-    ; Get current UTC and local time difference
-    nowUTC := A_NowUTC
-    nowLocal := A_Now
-    EnvSub, nowLocal, %nowUTC%, Seconds
-    offset := nowLocal
-
-    ; Apply offset to given UTC time
-    EnvAdd, utcTime, %offset%, Seconds
-    return utcTime
-}
-
-; Example usage
-iso := "2025-08-20T15:30:00Z"
-MsgBox % "Input (UTC): " iso "`nLocal: " ConvertISO8601ToLocal(iso)
