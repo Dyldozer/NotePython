@@ -1,45 +1,42 @@
-; Returns an object with OneDrive sign-in status
-; Example:
-; result := IsOneDriveSignedIn()
-; if (result.HasPersonal)
-;     MsgBox, Personal OneDrive signed in as % result.PersonalEmail
-; if (result.HasBusiness)
-;     MsgBox, Business OneDrive signed in as % result.BusinessEmail
-; if (!result.HasPersonal && !result.HasBusiness)
-;     MsgBox, No OneDrive accounts signed in
+# Simple WebSocket Client in PowerShell
+# Works with wss://echo.websocket.events
 
-IsOneDriveSignedIn() {
-    result := {}
+Add-Type -AssemblyName System.Net.WebSockets
+Add-Type -AssemblyName System.Runtime
 
-    ; --- Personal Account ---
-    RegRead, personalEmail, HKEY_CURRENT_USER\Software\Microsoft\OneDrive\Accounts\Personal, UserEmail
-    if !(ErrorLevel || personalEmail = "")
-    {
-        result.HasPersonal := true
-        result.PersonalEmail := personalEmail
-    }
-    else
-        result.HasPersonal := false
+$url = "wss://echo.websocket.events"
+$ws = [System.Net.WebSockets.ClientWebSocket]::new()
 
-    ; --- Business / Work Accounts ---
-    ; Business accounts are stored under ...\Accounts\Business1, Business2, etc.
-    businessFound := false
-    Loop
-    {
-        key := "HKEY_CURRENT_USER\Software\Microsoft\OneDrive\Accounts\Business" . A_Index
-        RegRead, businessEmail, %key%, UserEmail
-        if (ErrorLevel != 0)
-            break ; no more BusinessX keys
-        if (businessEmail != "")
-        {
-            result.HasBusiness := true
-            result.BusinessEmail := businessEmail
-            businessFound := true
-            break ; if you only need the first, remove break to collect all
-        }
-    }
-    if (!businessFound)
-        result.HasBusiness := false
+Write-Host "Connecting to $url ..."
+$ws.ConnectAsync([Uri]$url, [Threading.CancellationToken]::None).Wait()
 
-    return result
+if ($ws.State -ne [System.Net.WebSockets.WebSocketState]::Open) {
+    Write-Host "❌ Failed to connect."
+    exit
 }
+
+Write-Host "✅ Connected!"
+
+# Convert string message to byte[]
+$message = "Hello from PowerShell!"
+$buffer = [System.Text.Encoding]::UTF8.GetBytes($message)
+$segment = [ArraySegment[byte]]::new($buffer)
+
+# Send message
+$ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [Threading.CancellationToken]::None).Wait()
+Write-Host "➡️ Sent: $message"
+
+# Receive response
+$receiveBuffer = New-Object byte[] 4096
+$receiveSegment = [ArraySegment[byte]]::new($receiveBuffer)
+
+$result = $ws.ReceiveAsync($receiveSegment, [Threading.CancellationToken]::None).Result
+$response = [System.Text.Encoding]::UTF8.GetString($receiveBuffer, 0, $result.Count)
+
+Write-Host "⬅️ Received: $response"
+
+# Close connection
+$ws.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, "Done", [Threading.CancellationToken]::None).Wait()
+$ws.Dispose()
+
+Write-Host "🔒 Connection closed."
