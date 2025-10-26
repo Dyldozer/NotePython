@@ -1,42 +1,16 @@
-# Simple WebSocket Client in PowerShell
-# Works with wss://echo.websocket.events
-
-Add-Type -AssemblyName System.Net.WebSockets
-Add-Type -AssemblyName System.Runtime
-
-$url = "wss://echo.websocket.events"
 $ws = [System.Net.WebSockets.ClientWebSocket]::new()
+$uri = [Uri]"wss://echo.websocket.events"
+$ws.ConnectAsync($uri, [Threading.CancellationToken]::None).Wait()
 
-Write-Host "Connecting to $url ..."
-$ws.ConnectAsync([Uri]$url, [Threading.CancellationToken]::None).Wait()
-
-if ($ws.State -ne [System.Net.WebSockets.WebSocketState]::Open) {
-    Write-Host "❌ Failed to connect."
-    exit
-}
-
-Write-Host "✅ Connected!"
-
-# Convert string message to byte[]
-$message = "Hello from PowerShell!"
-$buffer = [System.Text.Encoding]::UTF8.GetBytes($message)
-$segment = [ArraySegment[byte]]::new($buffer)
-
-# Send message
+$msg = "Hello from PS7!"
+$bytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
+$segment = [ArraySegment[byte]]::new($bytes)
 $ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [Threading.CancellationToken]::None).Wait()
-Write-Host "➡️ Sent: $message"
 
-# Receive response
-$receiveBuffer = New-Object byte[] 4096
-$receiveSegment = [ArraySegment[byte]]::new($receiveBuffer)
+$buffer = [byte[]]::new(4096)
+$seg = [ArraySegment[byte]]::new($buffer)
+$result = $ws.ReceiveAsync($seg, [Threading.CancellationToken]::None).Result
+$response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count)
+Write-Host "Received: $response"
 
-$result = $ws.ReceiveAsync($receiveSegment, [Threading.CancellationToken]::None).Result
-$response = [System.Text.Encoding]::UTF8.GetString($receiveBuffer, 0, $result.Count)
-
-Write-Host "⬅️ Received: $response"
-
-# Close connection
-$ws.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, "Done", [Threading.CancellationToken]::None).Wait()
 $ws.Dispose()
-
-Write-Host "🔒 Connection closed."
