@@ -1,16 +1,28 @@
-$ws = [System.Net.WebSockets.ClientWebSocket]::new()
-$uri = [Uri]"wss://echo.websocket.events"
-$ws.ConnectAsync($uri, [Threading.CancellationToken]::None).Wait()
+; Select folder
+folder := FileSelectFolder("Select folder to scan for .ah2 files")
+if !folder
+{
+    MsgBox "No folder selected."
+    ExitApp
+}
 
-$msg = "Hello from PS7!"
-$bytes = [System.Text.Encoding]::UTF8.GetBytes($msg)
-$segment = [ArraySegment[byte]]::new($bytes)
-$ws.SendAsync($segment, [System.Net.WebSockets.WebSocketMessageType]::Text, $true, [Threading.CancellationToken]::None).Wait()
+count := 0
 
-$buffer = [byte[]]::new(4096)
-$seg = [ArraySegment[byte]]::new($buffer)
-$result = $ws.ReceiveAsync($seg, [Threading.CancellationToken]::None).Result
-$response = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $result.Count)
-Write-Host "Received: $response"
+; Loop through all files recursively
+Loop Files folder "\*.ah2", "R"
+{
+    oldPath := A_LoopFileFullPath
+    newPath := RegExReplace(oldPath, "\.ah2$", ".ahk")
+    try
+    {
+        FileMove(oldPath, newPath)
+        count++
+    }
+    catch as e
+    {
+        MsgBox "Failed to rename:`n" oldPath "`nError: " e.Message
+    }
+}
 
-$ws.Dispose()
+MsgBox "Finished renaming " count " file(s)."
+ExitApp
