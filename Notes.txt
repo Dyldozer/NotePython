@@ -1,28 +1,67 @@
-; Select folder
-folder := FileSelectFolder("Select folder to scan for .ah2 files")
-if !folder
-{
-    MsgBox "No folder selected."
-    ExitApp
+#Requires AutoHotkey v2.0
+
+helpMode := false ; global flag
+
+; --- Create GUI ---
+gui := Gui("Resize", "Button Help Example")
+gui.SetFont("s10")
+
+; Create Help button
+helpBtn := gui.AddButton("w120 h30", "Help Mode")
+helpBtn.OnEvent("Click", ToggleHelpMode)
+
+; Create other action buttons
+btns := Map()
+
+btns["Open"]  := gui.AddButton("w120 h30", "Open File")
+btns["Save"]  := gui.AddButton("w120 h30", "Save File")
+btns["Exit"]  := gui.AddButton("w120 h30", "Exit Program")
+
+; Hook all buttons to the same handler
+for name, btn in btns
+    btn.OnEvent("Click", ButtonHandler.Bind(name))
+
+gui.Show("AutoSize Center")
+return
+
+; --- FUNCTIONS ---
+
+ToggleHelpMode(*) {
+    global helpMode, helpBtn
+    helpMode := !helpMode
+    if helpMode {
+        helpBtn.Text := "Help Mode (ON)"
+        helpBtn.Opt("cBlue") ; change color text if supported
+        ToolTip("Help mode activated — click any button for info")
+    } else {
+        helpBtn.Text := "Help Mode"
+        ToolTip("Help mode off — buttons act normally")
+        SetTimer(()->ToolTip(""), -1000)
+    }
 }
 
-count := 0
-
-; Loop through all files recursively
-Loop Files folder "\*.ah2", "R"
-{
-    oldPath := A_LoopFileFullPath
-    newPath := RegExReplace(oldPath, "\.ah2$", ".ahk")
-    try
-    {
-        FileMove(oldPath, newPath)
-        count++
-    }
-    catch as e
-    {
-        MsgBox "Failed to rename:`n" oldPath "`nError: " e.Message
+ButtonHandler(name, *) {
+    global helpMode
+    if helpMode {
+        ShowButtonHelp(name)
+    } else {
+        RunButtonAction(name)
     }
 }
 
-MsgBox "Finished renaming " count " file(s)."
-ExitApp
+ShowButtonHelp(name) {
+    helpText := Map(
+        "Open", "Opens a file from disk.",
+        "Save", "Saves the current file.",
+        "Exit", "Closes the program safely."
+    )
+    MsgBox(helpText[name], "Help: " name)
+}
+
+RunButtonAction(name) {
+    switch name {
+        case "Open": MsgBox("Opening file...")
+        case "Save": MsgBox("Saving file...")
+        case "Exit": ExitApp()
+    }
+}
