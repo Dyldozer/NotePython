@@ -1,67 +1,13 @@
-#Requires AutoHotkey v2.0
+url := "https://example.com/api/data"
+cookie := "sessionid=abc123; othercookie=value"
 
-helpMode := false ; global flag
+http := ComObjCreate("WinHttp.WinHttpRequest.5.1")
+http.Open("GET", url, false)
 
-; --- Create GUI ---
-gui := Gui("Resize", "Button Help Example")
-gui.SetFont("s10")
+http.SetRequestHeader("Cookie", cookie)
+http.SetRequestHeader("User-Agent", "Mozilla/5.0")
+http.SetRequestHeader("Accept", "application/json")
 
-; Create Help button
-helpBtn := gui.AddButton("w120 h30", "Help Mode")
-helpBtn.OnEvent("Click", ToggleHelpMode)
+http.Send()
 
-; Create other action buttons
-btns := Map()
-
-btns["Open"]  := gui.AddButton("w120 h30", "Open File")
-btns["Save"]  := gui.AddButton("w120 h30", "Save File")
-btns["Exit"]  := gui.AddButton("w120 h30", "Exit Program")
-
-; Hook all buttons to the same handler
-for name, btn in btns
-    btn.OnEvent("Click", ButtonHandler.Bind(name))
-
-gui.Show("AutoSize Center")
-return
-
-; --- FUNCTIONS ---
-
-ToggleHelpMode(*) {
-    global helpMode, helpBtn
-    helpMode := !helpMode
-    if helpMode {
-        helpBtn.Text := "Help Mode (ON)"
-        helpBtn.Opt("cBlue") ; change color text if supported
-        ToolTip("Help mode activated — click any button for info")
-    } else {
-        helpBtn.Text := "Help Mode"
-        ToolTip("Help mode off — buttons act normally")
-        SetTimer(()->ToolTip(""), -1000)
-    }
-}
-
-ButtonHandler(name, *) {
-    global helpMode
-    if helpMode {
-        ShowButtonHelp(name)
-    } else {
-        RunButtonAction(name)
-    }
-}
-
-ShowButtonHelp(name) {
-    helpText := Map(
-        "Open", "Opens a file from disk.",
-        "Save", "Saves the current file.",
-        "Exit", "Closes the program safely."
-    )
-    MsgBox(helpText[name], "Help: " name)
-}
-
-RunButtonAction(name) {
-    switch name {
-        case "Open": MsgBox("Opening file...")
-        case "Save": MsgBox("Saving file...")
-        case "Exit": ExitApp()
-    }
-}
+MsgBox % http.ResponseText
