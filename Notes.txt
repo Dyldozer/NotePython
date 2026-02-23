@@ -1,13 +1,278 @@
-url := "https://example.com/api/data"
-cookie := "sessionid=abc123; othercookie=value"
+#Requires AutoHotkey v2.0
 
-http := ComObjCreate("WinHttp.WinHttpRequest.5.1")
-http.Open("GET", url, false)
+; CSV headers (14 columns) - 3rd column is "management description" for search
+Headers := ["system", "management area", "management description", "informational", "field ops", "fo manager", "priority", "nfs manager", "nfs dl", "urgent", "vp", "rvp", "highest level", "ceo"]
 
-http.SetRequestHeader("Cookie", cookie)
-http.SetRequestHeader("User-Agent", "Mozilla/5.0")
-http.SetRequestHeader("Accept", "application/json")
+; Global data
+Global g_Rows := []           ; Parsed CSV rows (array of arrays)
+Global g_Matches := []        ; Indices into g_Rows for current search matches
+Global g_SelectedRow := 0     ; Which match is shown (1-based index into g_Matches)
+Global g_Checkboxes := []    ; Checkbox controls for column selection
+Global g_ValueLabels := []   ; Labels showing column values
 
-http.Send()
+; Build main GUI
+MyGui := Gui("+Resize MinSize600x500", "CSV Email Picker - Search & Select")
+MyGui.OnEvent("Close", (*) => ExitApp())
+MyGui.OnEvent("Size", Gui_Size)
 
-MsgBox % http.ResponseText
+; --- CSV file section ---
+MyGui.Add("Text", "Section", "CSV file:")
+edtCsv := MyGui.Add("Edit", "ys w400 vCsvPath", "C:\path\to\your\data.csv")
+btnBrowse := MyGui.Add("Button", "ys", "Browse...")
+btnBrowse.OnEvent("Click", BrowseCSV)
+btnLoad := MyGui.Add("Button", "ys", "Load")
+btnLoad.OnEvent("Click", LoadButtonClick)
+
+; --- Search section ---
+MyGui.Add("Text", "xs Section", "Search in column 3 (management description):")
+edtSearch := MyGui.Add("Edit", "ys w300 vSearchTerm")
+btnSearch := MyGui.Add("Button", "ys", "Search")
+btnSearch.OnEvent("Click", (*) => DoSearch(edtSearch.Value, edtCsv.Value))
+
+; --- Match selector (when multiple matches) ---
+MyGui.Add("Text", "xs Section", "Match:")
+ddlMatch := MyGui.Add("DropDownList", "ys w400 vMatchChoice")
+ddlMatch.OnEvent("Change", MatchSelectionChanged)
+
+; --- Result row: checkboxes + column values ---
+MyGui.Add("Text", "xs Section", "Select columns to include (emails):")
+frmColumns := MyGui.Add("GroupBox", "xs w580 h200 vColumnsGroup", "Column selection")
+; We'll add checkboxes and labels dynamically in DoSearch/ShowRow
+
+; --- Buttons ---
+btnCopy := MyGui.Add("Button", "xs Section", "Copy selected emails to clipboard")
+btnCopy.OnEvent("Click", CopySelectedEmails)
+
+; --- ListView: parsed CSV data ---
+MyGui.Add("Text", "xs Section", "Parsed CSV data:")
+headerStr := ""
+for i, h in Headers
+    headerStr .= (i = 1 ? "" : "|") h
+headerStr := StrSplit(headerStr, "|")
+lvCSV := MyGui.Add("ListView", "xs w580 h220 vCSVList -Multi", headerStr)
+
+MyGui.Show()
+return
+
+LoadButtonClick(*) {
+    path := Trim(MyGui["CsvPath"].Value)
+    if path = "" {
+        MsgBox("Enter or browse to a CSV file path first.", "Load", "Icon!")
+        return
+    }
+    LoadCSV(path)
+
+    MsgBox(g_Rows.Length " row(s) loaded.", "Load", "Iconi")
+}
+
+BrowseCSV(*) {
+    path := FileSelect(1,, "Select CSV file", "CSV (*.csv)")
+    if path != ""
+        MyGui["CsvPath"].Value := path
+}
+
+; Parse one CSV line respecting quoted fields (handles "email1, email2")
+ParseCSVLine(line) {
+    out := []
+    pos := 1
+    len := StrLen(line)
+    while pos <= len {
+        if SubStr(line, pos, 1) = "`""
+        {
+            ; Quoted field: find closing "
+            start := pos + 1
+            pos := start
+            while pos <= len {
+                q := InStr(line, "`"", 0, pos)
+                if !q
+                    break
+                ; Check for escaped "" 
+                if SubStr(line, q + 1, 1) = "`""
+                    pos := q + 2
+                else {
+                    out.Push(StrReplace(SubStr(line, start, q - start), "`"`"", "`""))
+                    pos := q + 1
+                    break
+                }
+            }
+            ; Skip comma after closing quote
+            if SubStr(line, pos, 1) = ","
+                pos++
+        } else {
+            ; Unquoted: find next comma or end
+            end := InStr(line, ",", 0, pos)
+            if !end
+                end := len + 1
+            out.Push(Trim(SubStr(line, pos, end - pos)))
+            pos := end + (end <= len ? 1 : 0)
+        }
+    }
+    return out
+}
+
+; Load and parse CSV (UTF-8, strip BOM and \r)
+LoadCSV(path) {
+    Global g_Rows
+    g_Rows := []
+    if !FileExist(path) {
+        MsgBox("File not found: " path, "Error", "Icon!")
+        return false
+    }
+    try
+        content := FileRead(path, "UTF-8")
+    catch
+        content := FileRead(path)
+    if content = "" {
+        MsgBox("Could not read file or file is empty: " path, "Error", "Icon!")
+        return false
+    }
+    if SubStr(content, 1, 1) = Chr(0xFEFF)
+        content := SubStr(content, 2)   ; Strip BOM
+    lines := StrSplit(content, "`n")
+    for i, line in lines {
+        if i = 1
+            continue   ; Skip header row
+        line := RTrim(line, "`r`n")
+        if line = ""
+            continue
+        row := ParseCSVLine(line)
+        if row.Length
+            g_Rows.Push(row)
+    }
+    PopulateListView()
+    return true
+}
+
+PopulateListView() {
+    Global g_Rows
+    lv := MyGui["CSVList"]
+    lv.Delete()
+    for v, row in g_Rows {
+        MsgBox(v " - " row.Length)
+        parts := []
+        for i, value in Headers
+            parts.Push(i <= row.Length ? row[i] : "")
+        lv.Add("", parts*)
+    }
+}
+
+DoSearch(searchText, csvPath) {
+    Global g_Matches, g_SelectedRow, g_Rows
+    if !LoadCSV(csvPath)
+        return
+    searchText := Trim(searchText)
+    if searchText = "" {
+        MsgBox("Enter a search term.", "Search", "Icon!")
+        return
+    }
+    ; Column 3 = "management description"
+    g_Matches := []
+    for i, row in g_Rows {
+        if row.Length >= 3 && InStr(row[3], searchText)
+            g_Matches.Push(i)
+    }
+    if !g_Matches.Length {
+        MsgBox("No rows found where column 3 contains: " searchText, "Search", "Icon!")
+        return
+    }
+    ; Populate match dropdown
+    ddl := MyGui["MatchChoice"]
+    ddl.Delete()
+    for i, rowIdx in g_Matches {
+        row := g_Rows[rowIdx]
+        preview := row.Length >= 3 ? SubStr(row[3], 1, 60) : ""
+        if StrLen(row[3]) > 60
+            preview .= "..."
+        ddl.Add(["Match " i " (row " (rowIdx+2) "): " preview])
+    }
+    ddl.Choose(1)
+    g_SelectedRow := 1
+    ShowRow()
+}
+
+MatchSelectionChanged(*) {
+    Global g_SelectedRow
+    g_SelectedRow := MyGui["MatchChoice"].Value
+    ShowRow()
+}
+
+ShowRow() {
+    Global g_Checkboxes, g_ValueLabels, g_Matches, g_Rows
+    ; Remove previous checkboxes and value labels
+    for ctrl in g_Checkboxes
+        try ctrl.Destroy()
+    for ctrl in g_ValueLabels
+        try ctrl.Destroy()
+    g_Checkboxes := []
+    g_ValueLabels := []
+
+    if !g_Matches.Length || g_SelectedRow < 1
+        return
+    rowIdx := g_Matches[g_SelectedRow]
+    row := g_Rows[rowIdx]
+    frm := MyGui["ColumnsGroup"]
+    frm.GetPos(&gx, &gy,, &gw)
+
+    ; Add checkbox + value for each column (use Headers count)
+    y := gy + 25
+    for col, name in Headers {
+        val := (col <= row.Length) ? row[col] : ""
+        ; Checkbox
+        chk := MyGui.Add("CheckBox", "x" (gx+20) " y" y " w20 h20", "")
+        g_Checkboxes.Push(chk)
+        ; Truncate long values for display
+        displayVal := StrLen(val) > 50 ? SubStr(val, 1, 50) "..." : val
+        lbl := MyGui.Add("Text", "x" (gx+45) " y" (y+2) " w520", name ": " displayVal)
+        g_ValueLabels.Push(lbl)
+        y += 28
+    }
+    ; Resize group to fit
+    try frm.Move(,, 580, Min(y - gy + 10, 400))
+}
+
+; Collect emails from checked columns, split by comma, copy to clipboard
+CopySelectedEmails(*) {
+    Global g_Checkboxes, g_Matches, g_SelectedRow, g_Rows
+    if !g_Matches.Length || g_SelectedRow < 1
+        return
+    rowIdx := g_Matches[g_SelectedRow]
+    row := g_Rows[rowIdx]
+    emails := []
+    for i, chk in g_Checkboxes {
+        col := i
+        if chk.Value && col <= row.Length {
+            val := Trim(row[col])
+            if val = ""
+                continue
+            ; Split by comma (each part might be an email)
+            for _, part in StrSplit(val, ",")
+                emails.Push(Trim(part))
+        }
+    }
+    if !emails.Length {
+        MsgBox("Select at least one column.", "Copy", "Icon!")
+        return
+    }
+    ; Dedupe and join
+    seen := Map()
+    unique := []
+    for e in emails {
+        e := Trim(e)
+        if e != "" && !seen.Has(e) {
+            seen[e] := true
+            unique.Push(e)
+        }
+    }
+    clip := ""
+    for e in unique
+        clip .= (clip = "" ? "" : "`n") e
+    A_Clipboard := clip
+    MsgBox(unique.Length " email(s) copied to clipboard.", "Done", "Iconi")
+}
+
+Gui_Size(thisGui, minMax, w, h) {
+    if (minMax = -1)
+        return  ; Minimized
+    try
+        thisGui["CSVList"].Move(,, w - 30, h - 320)
+}
