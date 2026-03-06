@@ -1,16 +1,16 @@
-Private Sub Worksheet_Change(ByVal Target As Range)
+function main(workbook: ExcelScript.Workbook) {
 
-If Not Intersect(Target, Range("B2")) Is Nothing Then
-    
-    Dim tbl As ListObject
-    Set tbl = Me.ListObjects("Table1")
-    
-    tbl.ListRows.Add.Range(1, 1).Value = Target.Value
-    
-    Application.EnableEvents = False
-    Target.Value = ""
-    Application.EnableEvents = True
+  let sheet = workbook.getWorksheet("Sheet1");
 
-End If
+  let input = sheet.getRange("B2").getValue();
 
-End Sub
+  if (input === "" || input === null) {
+    return;
+  }
+
+  let table = sheet.getTable("Table1");
+  table.addRow(-1, [input]);
+
+  sheet.getRange("B2").clear();
+
+}
