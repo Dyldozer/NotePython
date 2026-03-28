@@ -1,16 +1,58 @@
-function main(workbook: ExcelScript.Workbook) {
+#Requires AutoHotkey v2.0
+#Include UIA.ahk
+#Include UIA_Browser.ahk
 
-  let sheet = workbook.getWorksheet("Sheet1");
+url := "https://github.com/Descolada/UIA-v2/wiki/07.-Patterns#introduction"
 
-  let input = sheet.getRange("B2").getValue();
+existingWindows := []
+try existingWindows := WinGetList("ahk_exe chrome.exe")
 
-  if (input === "" || input === null) {
-    return;
-  }
+Run 'chrome.exe --new-window "' url '"'
 
-  let table = sheet.getTable("Table1");
-  table.addRow(-1, [input]);
-
-  sheet.getRange("B2").clear();
-
+newHwnd := 0
+timeout := A_TickCount + 15000
+while (A_TickCount < timeout) {
+    try {
+        allWindows := WinGetList("ahk_exe chrome.exe")
+        for hwnd in allWindows {
+            isNew := true
+            for existing in existingWindows {
+                if (hwnd = existing) {
+                    isNew := false
+                    break
+                }
+            }
+            if isNew {
+                newHwnd := hwnd
+                break 2
+            }
+        }
+    }
+    Sleep 200
 }
+
+if !newHwnd {
+    MsgBox "Failed to detect new Chrome window."
+    ExitApp
+}
+
+cUIA := UIA_Browser("ahk_id " newHwnd)
+cUIA.WaitPageLoad(, 30000, 500)
+
+pageText := cUIA.GetAllText()
+
+url2 := "https://github.com/Descolada/UIA-v2/wiki/08.-Common-pitfalls;-tips-and-tricks"
+cUIA.Navigate(url2, , 30000, 500)
+
+pageText2 := cUIA.GetAllText()
+
+WinClose "ahk_id " newHwnd
+
+outputFile := A_ScriptDir "\PageText.txt"
+f := FileOpen(outputFile, "w", "UTF-8")
+f.Write("=== 07. Patterns ===`n`n")
+f.Write(pageText)
+f.Write("`n`n=== 08. Common pitfalls; tips and tricks ===`n`n")
+f.Write(pageText2)
+f.Close()
+MsgBox "Text from both pages saved to " outputFile
