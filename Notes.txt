@@ -1,58 +1,72 @@
 #Requires AutoHotkey v2.0
-#Include UIA.ahk
-#Include UIA_Browser.ahk
 
-url := "https://github.com/Descolada/UIA-v2/wiki/07.-Patterns#introduction"
+global TargetHwnd := 0
+global Transparency := 180 ; 0-255 (lower = more transparent)
 
-existingWindows := []
-try existingWindows := WinGetList("ahk_exe chrome.exe")
+; Ctrl+Alt+T: Toggle click-through mode on the active window
+^!t::
+{
+    global TargetHwnd, Transparency
 
-Run 'chrome.exe --new-window "' url '"'
+    hwnd := WinExist("A")
 
-newHwnd := 0
-timeout := A_TickCount + 15000
-while (A_TickCount < timeout) {
-    try {
-        allWindows := WinGetList("ahk_exe chrome.exe")
-        for hwnd in allWindows {
-            isNew := true
-            for existing in existingWindows {
-                if (hwnd = existing) {
-                    isNew := false
-                    break
-                }
-            }
-            if isNew {
-                newHwnd := hwnd
-                break 2
-            }
+    ; If we're toggling off the current target
+    if (hwnd = TargetHwnd)
+    {
+        WinSetTransparent(255, "ahk_id " hwnd)
+
+        exStyle := WinGetExStyle("ahk_id " hwnd)
+        WinSetExStyle(exStyle & ~0x20, "ahk_id " hwnd) ; Remove WS_EX_TRANSPARENT
+
+        TargetHwnd := 0
+        ToolTip("Click-through OFF")
+        SetTimer(() => ToolTip(), -1000)
+        return
+    }
+
+    ; Disable previous target if one exists
+    if (TargetHwnd)
+    {
+        try
+        {
+            WinSetTransparent(255, "ahk_id " TargetHwnd)
+            exStyle := WinGetExStyle("ahk_id " TargetHwnd)
+            WinSetExStyle(exStyle & ~0x20, "ahk_id " TargetHwnd)
         }
     }
-    Sleep 200
+
+    ; Enable on new target
+    WinSetTransparent(Transparency, "ahk_id " hwnd)
+
+    exStyle := WinGetExStyle("ahk_id " hwnd)
+    WinSetExStyle(exStyle | 0x20, "ahk_id " hwnd) ; WS_EX_TRANSPARENT
+
+    TargetHwnd := hwnd
+
+    ToolTip("Click-through ON")
+    SetTimer(() => ToolTip(), -1000)
 }
 
-if !newHwnd {
-    MsgBox "Failed to detect new Chrome window."
-    ExitApp
+; While Ctrl is held, temporarily disable click-through
+~Ctrl::
+{
+    global TargetHwnd
+
+    if (!TargetHwnd)
+        return
+
+    exStyle := WinGetExStyle("ahk_id " TargetHwnd)
+    WinSetExStyle(exStyle & ~0x20, "ahk_id " TargetHwnd)
 }
 
-cUIA := UIA_Browser("ahk_id " newHwnd)
-cUIA.WaitPageLoad(, 30000, 500)
+; Re-enable click-through when Ctrl is released
+~Ctrl Up::
+{
+    global TargetHwnd
 
-pageText := cUIA.GetAllText()
+    if (!TargetHwnd)
+        return
 
-url2 := "https://github.com/Descolada/UIA-v2/wiki/08.-Common-pitfalls;-tips-and-tricks"
-cUIA.Navigate(url2, , 30000, 500)
-
-pageText2 := cUIA.GetAllText()
-
-WinClose "ahk_id " newHwnd
-
-outputFile := A_ScriptDir "\PageText.txt"
-f := FileOpen(outputFile, "w", "UTF-8")
-f.Write("=== 07. Patterns ===`n`n")
-f.Write(pageText)
-f.Write("`n`n=== 08. Common pitfalls; tips and tricks ===`n`n")
-f.Write(pageText2)
-f.Close()
-MsgBox "Text from both pages saved to " outputFile
+    exStyle := WinGetExStyle("ahk_id " TargetHwnd)
+    WinSetExStyle(exStyle | 0x20, "ahk_id " TargetHwnd)
+}
