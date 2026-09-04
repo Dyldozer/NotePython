@@ -1,107 +1,274 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
-result := "ROT diagnostic`n"
-result .= "================`n`n"
+; ============================================================
+; Tutorial Maker - AHK v2 + PowerShell
+; ============================================================
 
-; First test the exact thing your script needs.
-try {
-    outlook := ComObjActive("Outlook.Application")
-    result .= "ComObjActive Outlook: SUCCESS`n"
-    result .= "Outlook Version: " outlook.Version "`n`n"
-} catch as e {
-    result .= "ComObjActive Outlook: FAILED`n"
-    result .= "Error: " e.Message "`n"
-    result .= "Code: 0x" Format("{:08X}", e.Number & 0xFFFFFFFF) "`n`n"
+global Recording := false
+global FrameCount := 0
+global OutputDir := ""
+global CapturePending := false
+
+; ------------------------------------------------------------
+; SETTINGS
+; ------------------------------------------------------------
+
+FrameDelay := 800        ; GIF frame duration in milliseconds
+CaptureDelay := 150      ; Wait after click before screenshot
+
+; ------------------------------------------------------------
+; START RECORDING
+; ------------------------------------------------------------
+
+F8::
+{
+    global Recording, FrameCount, OutputDir
+
+    if Recording
+        return
+
+    FrameCount := 0
+
+    ; Create recording folder on Desktop
+    desktop := A_Desktop
+
+    timestamp := FormatTime(, "yyyy-MM-dd_HH-mm-ss")
+    OutputDir := desktop "\Tutorial_" timestamp
+
+    DirCreate(OutputDir)
+
+    Recording := true
+
+    ToolTip("🔴 RECORDING`n`nLeft-click to capture steps`nF9 = Finish`nEsc = Cancel")
+
+    SetTimer(HideToolTip, -2500)
 }
 
-; Create a bind context.
-bindCtx := 0
-hr := DllCall("ole32\CreateBindCtx"
-    , "UInt", 0
-    , "Ptr*", &bindCtx)
+; ------------------------------------------------------------
+; CAPTURE AFTER LEFT CLICK
+; ------------------------------------------------------------
 
-if (hr != 0) {
-    result .= "CreateBindCtx FAILED: 0x" Format("{:08X}", hr & 0xFFFFFFFF)
-    MsgBox result
-    ExitApp
+~LButton Up::
+{
+    global Recording, CapturePending, CaptureDelay
+
+    if !Recording
+        return
+
+    ; Prevent several captures from being queued at once.
+    if CapturePending
+        return
+
+    CapturePending := true
+
+    SetTimer(CaptureFrame, -CaptureDelay)
 }
 
-; Get the Running Object Table.
-rot := 0
-hr := DllCall("ole32\GetRunningObjectTable"
-    , "UInt", 0
-    , "Ptr*", &rot)
+; ------------------------------------------------------------
+; TAKE SCREENSHOT
+; ------------------------------------------------------------
 
-if (hr != 0) {
-    result .= "GetRunningObjectTable FAILED: 0x"
-        . Format("{:08X}", hr & 0xFFFFFFFF)
-    ObjRelease(bindCtx)
-    MsgBox result
-    ExitApp
+CaptureFrame()
+{
+    global Recording, FrameCount, OutputDir, CapturePending
+
+    CapturePending := false
+
+    if !Recording
+        return
+
+    FrameCount++
+
+    filename := Format("{:04}.png", FrameCount)
+    filepath := OutputDir "\" filename
+
+    ; PowerShell screenshot
+    psCommand := "
+    (
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+
+$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+
+$graphics.CopyFromScreen(
+    $bounds.Left,
+    $bounds.Top,
+    0,
+    0,
+    $bounds.Size
+)
+
+$bitmap.Save('%FILE%', [System.Drawing.Imaging.ImageFormat]::Png)
+
+$graphics.Dispose()
+$bitmap.Dispose()
+    )"
+
+    psCommand := StrReplace(psCommand, "%FILE%", filepath)
+
+    RunWait(
+        'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "' 
+        . StrReplace(psCommand, '"', '\"')
+        . '"',
+        ,
+        "Hide"
+    )
+
+    ToolTip("🔴 Step " FrameCount " captured")
+    SetTimer(HideToolTip, -700)
 }
 
-; IRunningObjectTable::EnumRunning = vtable index 9
-enum := 0
-hr := ComCall(9, rot, "Ptr*", &enum)
+; ------------------------------------------------------------
+; STOP + CREATE GIF
+; ------------------------------------------------------------
 
-if (hr != 0) {
-    result .= "EnumRunning FAILED: 0x"
-        . Format("{:08X}", hr & 0xFFFFFFFF)
-    ObjRelease(rot)
-    ObjRelease(bindCtx)
-    MsgBox result
-    ExitApp
-}
+F9::
+{
+    global Recording, FrameCount, OutputDir, FrameDelay
 
-result .= "Running Object Table entries:`n"
-result .= "-----------------------------`n"
+    if !Recording
+        return
 
-count := 0
+    Recording := false
 
-Loop {
-    moniker := 0
-    fetched := 0
-
-    ; IEnumMoniker::Next = vtable index 3
-    hr := ComCall(3, enum
-        , "UInt", 1
-        , "Ptr*", &moniker
-        , "UInt*", &fetched)
-
-    ; S_FALSE = no more entries.
-    if (hr != 0 || fetched = 0)
-        break
-
-    displayName := 0
-
-    ; IMoniker::GetDisplayName = vtable index 20
-    hr := ComCall(20, moniker
-        , "Ptr", bindCtx
-        , "Ptr", 0
-        , "Ptr*", &displayName)
-
-    if (hr = 0 && displayName) {
-        name := StrGet(displayName, "UTF-16")
-        result .= name "`n"
-
-        ; Highlight anything Outlook-related.
-        if InStr(name, "Outlook")
-            result .= "    <--- OUTLOOK RELATED`n"
-
-        ; CoTaskMemFree is required for GetDisplayName's returned string.
-        DllCall("ole32\CoTaskMemFree", "Ptr", displayName)
-
-        count++
+    if FrameCount = 0
+    {
+        ToolTip("No screenshots were captured.")
+        SetTimer(HideToolTip, -2000)
+        return
     }
 
-    ObjRelease(moniker)
+    ToolTip("Creating GIF...`nPlease wait.")
+
+    gifPath := OutputDir "\tutorial.gif"
+
+    ; PowerShell script to create animated GIF
+    psCommand := "
+    (
+Add-Type -AssemblyName System.Drawing
+
+$folder = '%FOLDER%'
+$output = '%OUTPUT%'
+$delay = %DELAY%
+
+$files = Get-ChildItem $folder -Filter '*.png' |
+    Sort-Object Name
+
+if ($files.Count -eq 0) {
+    exit
 }
 
-result .= "`nTotal entries: " count "`n"
+$images = @()
 
-ObjRelease(enum)
-ObjRelease(rot)
-ObjRelease(bindCtx)
+foreach ($file in $files) {
+    $images += [System.Drawing.Image]::FromFile($file.FullName)
+}
 
-MsgBox result, "AHK v2 ROT Diagnostic"
+$encoder = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
+    Where-Object { $_.MimeType -eq 'image/gif' }
+
+$first = $images[0]
+
+$propertyItem = [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject(
+    [System.Drawing.Imaging.PropertyItem]
+)
+
+$propertyItem.Id = 0x5100
+$propertyItem.Type = 4
+$propertyItem.Len = 4
+
+$delayValue = [Math]::Max(1, [Math]::Round($delay / 10))
+
+$bytes = New-Object byte[] 4
+[BitConverter]::GetBytes([int]$delayValue).CopyTo($bytes, 0)
+$propertyItem.Value = $bytes
+
+$first.SetPropertyItem($propertyItem)
+
+$encoderParams = New-Object System.Drawing.Imaging.EncoderParameters 1
+$encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter(
+    [System.Drawing.Imaging.Encoder]::SaveFlag,
+    [int][System.Drawing.Imaging.EncoderValue]::MultiFrame
+)
+
+$first.Save($output, $encoder, $encoderParams)
+
+$encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter(
+    [System.Drawing.Imaging.Encoder]::SaveFlag,
+    [int][System.Drawing.Imaging.EncoderValue]::FrameDimensionTime
+)
+
+foreach ($image in $images[1..($images.Count - 1)]) {
+
+    $image.SetPropertyItem($propertyItem)
+
+    $first.SaveAdd($image, $encoderParams)
+}
+
+$encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter(
+    [System.Drawing.Imaging.Encoder]::SaveFlag,
+    [int][System.Drawing.Imaging.EncoderValue]::Flush
+)
+
+$first.SaveAdd($encoderParams)
+
+foreach ($image in $images) {
+    $image.Dispose()
+}
+
+$first.Dispose()
+    )"
+
+    psCommand := StrReplace(psCommand, "%FOLDER%", OutputDir)
+    psCommand := StrReplace(psCommand, "%OUTPUT%", gifPath)
+    psCommand := StrReplace(psCommand, "%DELAY%", FrameDelay)
+
+    RunWait(
+        'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "'
+        . StrReplace(psCommand, '"', '\"')
+        . '"',
+        ,
+        "Hide"
+    )
+
+    ToolTip(
+        "✅ Tutorial complete!`n`n"
+        . FrameCount " frames captured.`n`n"
+        . gifPath
+    )
+
+    SetTimer(HideToolTip, -4000)
+
+    ; Open the recording folder
+    Run(OutputDir)
+}
+
+; ------------------------------------------------------------
+; CANCEL
+; ------------------------------------------------------------
+
+Esc::
+{
+    global Recording
+
+    if !Recording
+        return
+
+    Recording := false
+
+    ToolTip("Recording cancelled.")
+    SetTimer(HideToolTip, -1500)
+}
+
+; ------------------------------------------------------------
+; TOOLTIP
+; ------------------------------------------------------------
+
+HideToolTip()
+{
+    ToolTip()
+}
