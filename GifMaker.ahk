@@ -237,19 +237,19 @@ CaptureClick(x, y, isDouble) {
 
 GetCaptureRect(mx, my, &x, &y, &w, &h) {
     GetMonitorAt(mx, my, &ml, &mt, &mr, &mb)
-    half := GM.CaptureSize // 2
-    x1 := mx - half
-    y1 := my - half
-    x2 := mx + half
-    y2 := my + half
-    x1 := Max(x1, ml)
-    y1 := Max(y1, mt)
-    x2 := Min(x2, mr)
-    y2 := Min(y2, mb)
-    x := x1
-    y := y1
-    w := x2 - x1
-    h := y2 - y1
+    size := GM.CaptureSize
+    x := mx - size // 2
+    y := my - size // 2
+    if (mr - ml >= size)
+        x := Max(ml, Min(x, mr - size))
+    else
+        x := ml
+    if (mb - mt >= size)
+        y := Max(mt, Min(y, mb - size))
+    else
+        y := mt
+    w := Min(size, mr - x)
+    h := Min(size, mb - y)
 }
 
 GetMonitorAt(px, py, &l, &t, &r, &b) {
@@ -264,10 +264,16 @@ GetMonitorAt(px, py, &l, &t, &r, &b) {
 }
 
 ScreenCapture(x, y, w, h) {
+    size := GM.CaptureSize
     hdcScreen := DllCall("GetDC", "ptr", 0, "ptr")
     hdcMem := DllCall("CreateCompatibleDC", "ptr", hdcScreen, "ptr")
-    hbm := DllCall("CreateCompatibleBitmap", "ptr", hdcScreen, "int", w, "int", h, "ptr")
+    hbm := DllCall("CreateCompatibleBitmap", "ptr", hdcScreen, "int", size, "int", size, "ptr")
     old := DllCall("SelectObject", "ptr", hdcMem, "ptr", hbm, "ptr")
+    brush := DllCall("CreateSolidBrush", "uint", 0, "ptr")
+    rc := Buffer(16)
+    NumPut("int", 0, "int", 0, "int", size, "int", size, rc)
+    DllCall("FillRect", "ptr", hdcMem, "ptr", rc, "ptr", brush)
+    DllCall("DeleteObject", "ptr", brush)
     DllCall("BitBlt", "ptr", hdcMem, "int", 0, "int", 0, "int", w, "int", h
         , "ptr", hdcScreen, "int", x, "int", y, "uint", 0x00CC0020)
     DllCall("SelectObject", "ptr", hdcMem, "ptr", old, "ptr")
@@ -499,17 +505,21 @@ class Editor {
     imgW := 1
     imgH := 1
     previewPath := ""
+    viewPath := ""
     previewMax := 640
+    offX := 0
+    offY := 0
     busy := false
 
     Show() {
         this.previewPath := GM.SessionDir "\_preview.png"
+        this.viewPath := GM.SessionDir "\_view.png"
         this.gui := Gui("+OwnDialogs", "Tutorial GIF Editor")
         this.gui.SetFont("s10", "Segoe UI")
         this.gui.OnEvent("Close", (*) => this.Close())
         this.gui.OnEvent("Escape", (*) => this.Close())
 
-        this.pic := this.gui.Add("Picture", "x16 y16 w640 h640 0x100")
+        this.pic := this.gui.Add("Picture", "x16 y16 w640 h640 0x140")
         this.gui.Add("Text", "x672 y16 w280", "Frames")
         this.list := this.gui.Add("ListBox", "x672 y40 w280 h240")
         this.list.OnEvent("Change", (*) => this.SelectFromList())
@@ -553,6 +563,8 @@ class Editor {
         SaveSession()
         if this.previewPath && FileExist(this.previewPath)
             try FileDelete(this.previewPath)
+        if this.viewPath && FileExist(this.viewPath)
+            try FileDelete(this.viewPath)
         GM.EditorOpen := false
         GM.Editor := 0
         if this.gui
@@ -562,6 +574,7 @@ class Editor {
 
     Reload() {
         this.previewPath := GM.SessionDir "\_preview.png"
+        this.viewPath := GM.SessionDir "\_view.png"
         this.RefreshList(1)
         SplitPath(GM.SessionDir, &folderName)
         if GM.Frames.Length
@@ -627,20 +640,38 @@ class Editor {
     }
 
     ShowImage(path) {
-        if !FileExist(path)
+        this.SetPreview(path)
+    }
+
+    SetPreview(path) {
+        if !this.pic || !FileExist(path)
             return
-        pBmp := Gdip_LoadImage(path)
-        if !pBmp
+        pSrc := Gdip_LoadImage(path)
+        if !pSrc
             return
-        this.imgW := Gdip_GetWidth(pBmp)
-        this.imgH := Gdip_GetHeight(pBmp)
-        Gdip_DisposeImage(pBmp)
-        this.scale := Min(this.previewMax / this.imgW, this.previewMax / this.imgH)
-        dw := Max(1, Round(this.imgW * this.scale))
-        dh := Max(1, Round(this.imgH * this.scale))
-        this.pic.Move(16, 16, dw, dh)
+        this.imgW := Gdip_GetWidth(pSrc)
+        this.imgH := Gdip_GetHeight(pSrc)
+        box := this.previewMax
+        this.scale := Min(box / this.imgW, box / this.imgH)
+        dw := this.imgW * this.scale
+        dh := this.imgH * this.scale
+        this.offX := (box - dw) / 2
+        this.offY := (box - dh) / 2
+        pDst := Gdip_CreateBitmap(box, box)
+        g := Gdip_GraphicsFromImage(pDst)
+        DllCall("gdiplus\GdipGraphicsClear", "ptr", g, "uint", 0xFF202020)
+        DllCall("gdiplus\GdipSetInterpolationMode", "ptr", g, "int", 7)
+        DllCall("gdiplus\GdipDrawImageRectRectI", "ptr", g, "ptr", pSrc
+            , "int", Round(this.offX), "int", Round(this.offY), "int", Round(dw), "int", Round(dh)
+            , "int", 0, "int", 0, "int", this.imgW, "int", this.imgH
+            , "int", 2, "ptr", 0, "ptr", 0, "ptr", 0)
+        DllCall("gdiplus\GdipDeleteGraphics", "ptr", g)
+        Gdip_DisposeImage(pSrc)
+        Gdip_SavePng(pDst, this.viewPath)
+        Gdip_DisposeImage(pDst)
+        this.pic.Move(16, 16, box, box)
         this.pic.Value := ""
-        this.pic.Value := path
+        this.pic.Value := this.viewPath
     }
 
     ApplyDelay() {
@@ -705,8 +736,8 @@ class Editor {
         DllCall("ScreenToClient", "ptr", this.pic.Hwnd, "ptr", pt)
         px := NumGet(pt, 0, "int")
         py := NumGet(pt, 4, "int")
-        x := px / this.scale
-        y := py / this.scale
+        x := (px - this.offX) / this.scale
+        y := (py - this.offY) / this.scale
         return true
     }
 
@@ -769,8 +800,7 @@ class Editor {
             extra := {type: "circle", x: this.dragX, y: this.dragY, r: Max(r, 4), color: this.color}
         }
         BakeFrame(this.index, extra, this.previewPath)
-        this.pic.Value := ""
-        this.pic.Value := this.previewPath
+        this.SetPreview(this.previewPath)
     }
 
     AddAnn(ann) {
@@ -997,6 +1027,12 @@ Gdip_Startup() {
 Gdip_CreateBitmapFromHBITMAP(hbm) {
     pBitmap := 0
     DllCall("gdiplus\GdipCreateBitmapFromHBITMAP", "ptr", hbm, "ptr", 0, "ptr*", &pBitmap)
+    return pBitmap
+}
+
+Gdip_CreateBitmap(w, h) {
+    pBitmap := 0
+    DllCall("gdiplus\GdipCreateBitmapFromScan0", "int", w, "int", h, "int", 0, "int", 0x26200A, "ptr", 0, "ptr*", &pBitmap)
     return pBitmap
 }
 
