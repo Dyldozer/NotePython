@@ -29,8 +29,6 @@ class GM {
     static LastSessionDir := ""
     static Frames := []
     static Editor := 0
-    static GifPid := 0
-    static GifOut := ""
 }
 
 Gdip_Startup()
@@ -313,7 +311,7 @@ OpenEditorFromHotkey() {
         dir := GM.LastSessionDir
     else {
         start := DirExist(A_ScriptDir "\recordings") ? A_ScriptDir "\recordings" : A_ScriptDir
-        dir := FileSelectFolder(start, 3, "Select a GIF Maker recording folder")
+        dir := DirSelect(start "\", 0, "Select a GIF Maker recording folder")
         if !dir
             return
     }
@@ -558,7 +556,6 @@ class Editor {
     }
 
     Close() {
-        SetTimer(WatchGif, 0)
         this.busy := false
         SaveSession()
         if this.previewPath && FileExist(this.previewPath)
@@ -587,7 +584,7 @@ class Editor {
         if this.busy
             return
         start := GM.SessionDir ? GM.SessionDir : (DirExist(A_ScriptDir "\recordings") ? A_ScriptDir "\recordings" : A_ScriptDir)
-        dir := FileSelectFolder(start, 3, "Select a GIF Maker recording folder")
+        dir := DirSelect(start "\", 0, "Select a GIF Maker recording folder")
         if !dir
             return
         if GM.SessionDir && DirExist(GM.SessionDir)
@@ -825,7 +822,7 @@ class Editor {
         this.ApplyDelay()
         SaveSession()
         this.pic.Value := ""
-        Sleep(40)
+        Sleep(50)
 
         loop GM.Frames.Length
             BakeFrame(A_Index)
@@ -840,44 +837,38 @@ class Editor {
             json .= (A_Index < GM.Frames.Length) ? ",`n" : "`n"
         }
         json .= "  ]`n}`n"
-        try FileDelete(jobPath)
+        jf := FileOpen(jobPath, "w", "UTF-8-RAW")
+        jf.Write(json)
+        jf.Close()
         try FileDelete(outGif)
-        FileAppend(json, jobPath, "UTF-8-RAW")
 
         ShowTip("Creating GIF")
         this.status.Text := "Creating GIF..."
+        errFile := A_Temp "\gifmaker_err.txt"
+        try FileDelete(errFile)
         ps := A_WinDir "\System32\WindowsPowerShell\v1.0\powershell.exe"
         script := A_ScriptDir "\Create-Gif.ps1"
-        cmd := Format('"{1}" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{2}" -Job "{3}"'
-            , ps, script, jobPath)
+        cmd := '"' ps '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' script '" -Job "' jobPath '"'
         this.busy := true
-        GM.GifOut := outGif
-        GM.GifPid := 0
-        Run(cmd, GM.SessionDir, "Hide", &pid)
-        if !pid {
-            this.busy := false
-            this.LoadCurrent()
-            this.status.Text := "GIF failed"
-            MsgBox("Could not start PowerShell to create the GIF.", "Tutorial GIF Maker", "Iconx")
-            return
-        }
-        GM.GifPid := pid
-        SetTimer(WatchGif, 200)
-    }
-
-    FinishGif() {
+        exitCode := RunWait(cmd, GM.SessionDir, "Hide")
         this.busy := false
-        outGif := GM.GifOut
-        try FileDelete(GM.SessionDir "\gif_job.json")
+        HideTip()
+        try FileDelete(jobPath)
         this.LoadCurrent()
-        if FileExist(outGif) {
+
+        if exitCode = 0 && FileExist(outGif) {
             this.status.Text := "GIF created: " GM.SessionName ".gif"
             ShowTip("Creating GIF — done")
             Run('"' outGif '"')
-        } else {
-            this.status.Text := "GIF failed"
-            MsgBox("GIF creation failed.", "Tutorial GIF Maker", "Iconx")
+            return
         }
+        detail := ""
+        if FileExist(errFile) {
+            detail := Trim(FileRead(errFile))
+            try FileDelete(errFile)
+        }
+        this.status.Text := "GIF failed"
+        MsgBox("GIF creation failed." (detail != "" ? "`n`n" detail : ""), "Tutorial GIF Maker", "Iconx")
     }
 }
 
@@ -899,17 +890,6 @@ BakeFrame(index, extra := 0, dest := "") {
         DrawAnnotation(pBmp, a)
     Gdip_SavePng(pBmp, dest)
     Gdip_DisposeImage(pBmp)
-}
-
-WatchGif(*) {
-    if !GM.GifPid
-        return
-    if ProcessExist(GM.GifPid)
-        return
-    SetTimer(WatchGif, 0)
-    GM.GifPid := 0
-    if GM.Editor
-        GM.Editor.FinishGif()
 }
 
 DrawAnnotation(pBitmap, a) {
