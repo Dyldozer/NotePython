@@ -7,11 +7,6 @@ param(
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 
-function Write-JobLog([string]$JobPath, [string]$Text) {
-    $log = Join-Path (Split-Path -Parent $JobPath) "gif_log.txt"
-    $Text | Out-File -FilePath $log -Encoding utf8
-}
-
 function Read-SubBlocks([byte[]]$Bytes, [ref]$Pos) {
     $start = $Pos.Value
     while ($Pos.Value -lt $Bytes.Length) {
@@ -38,8 +33,12 @@ function Get-LocalColorTableSize([byte]$Packed) {
 function Convert-PngToGifBytes([string]$Path) {
     $fileBytes = [System.IO.File]::ReadAllBytes($Path)
     $inStream = New-Object System.IO.MemoryStream(,$fileBytes)
-    $src = [System.Drawing.Image]::FromStream($inStream)
-    $bmp = New-Object System.Drawing.Bitmap($src)
+    $src = [System.Drawing.Image]::FromStream($inStream, $false, $true)
+    $bmp = New-Object System.Drawing.Bitmap($src.Width, $src.Height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.Clear([System.Drawing.Color]::White)
+    $g.DrawImage($src, 0, 0, $src.Width, $src.Height)
+    $g.Dispose()
     $src.Dispose()
     $inStream.Dispose()
 
@@ -157,33 +156,42 @@ function Write-Gce([System.IO.BinaryWriter]$Writer, [int]$DelayMs) {
     $Writer.Write([byte]0x00)
 }
 
+$ErrorFile = Join-Path $env:TEMP "gifmaker_err.txt"
 try {
+    if (Test-Path -LiteralPath $ErrorFile) {
+        Remove-Item -LiteralPath $ErrorFile -Force
+    }
+
     if (-not (Test-Path -LiteralPath $Job)) {
         throw "Job file not found: $Job"
     }
 
     $jobObj = Get-Content -LiteralPath $Job -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($null -eq $jobObj.frames -or $jobObj.frames.Count -lt 1) {
+    $frames = @($jobObj.frames)
+    if ($frames.Count -lt 1) {
         throw "Job has no frames."
     }
 
-    $frameInfos = @()
+    $frameInfos = New-Object System.Collections.Generic.List[object]
     $maxW = 1
     $maxH = 1
-    foreach ($frame in $jobObj.frames) {
+    foreach ($frame in $frames) {
         $path = [string]$frame.path
-        if (-not (Test-Path -LiteralPath $path)) {
+        if (-not $path -or -not (Test-Path -LiteralPath $path)) {
             throw "Frame not found: $path"
         }
         $gifBytes = Convert-PngToGifBytes $path
         $info = Get-GifFrameInfo $gifBytes
         $info.DelayMs = [int]$frame.delayMs
-        $frameInfos += $info
+        $frameInfos.Add($info)
         if ($info.Width -gt $maxW) { $maxW = $info.Width }
         if ($info.Height -gt $maxH) { $maxH = $info.Height }
     }
 
     $outPath = [string]$jobObj.output
+    if (-not $outPath) {
+        throw "Job has no output path."
+    }
     $outDir = Split-Path -Parent $outPath
     if ($outDir -and -not (Test-Path -LiteralPath $outDir)) {
         New-Item -ItemType Directory -Path $outDir | Out-Null
@@ -225,11 +233,10 @@ try {
     [System.IO.File]::WriteAllBytes($outPath, $ms.ToArray())
     $writer.Dispose()
     $ms.Dispose()
-
-    Write-JobLog $Job "Wrote $outPath"
-    Write-Output "Wrote $outPath"
+    exit 0
 }
 catch {
-    Write-JobLog $Job $_.ToString()
-    throw
+    $msg = $_.Exception.Message
+    Set-Content -LiteralPath $ErrorFile -Value $msg -Encoding UTF8
+    exit 1
 }
