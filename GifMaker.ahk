@@ -3,7 +3,7 @@
 Persistent
 
 ; Tutorial GIF Maker
-; F8 start  |  F9 stop & edit  |  Esc cancel
+; F8 start  |  F9 stop & edit  |  Ctrl+F9 open editor  |  Esc cancel
 ; Left click / double-click capture an 800x800 region around the cursor.
 
 try DllCall("SetProcessDpiAwarenessContext", "ptr", -4)
@@ -29,6 +29,8 @@ class GM {
     static LastSessionDir := ""
     static Frames := []
     static Editor := 0
+    static GifPid := 0
+    static GifOut := ""
 }
 
 Gdip_Startup()
@@ -41,10 +43,11 @@ A_TrayMenu.Add("Start recording (F8)", TrayStart)
 A_TrayMenu.Add("Stop recording (F9)", TrayStop)
 A_TrayMenu.Add("Cancel recording (Esc)", TrayCancel)
 A_TrayMenu.Add()
+A_TrayMenu.Add("Open editor (Ctrl+F9)", TrayOpenEditor)
 A_TrayMenu.Add("Open last recording", TrayOpenLast)
 A_TrayMenu.Add("Exit", (*) => ExitApp())
 A_TrayMenu.Default := "Start recording (F8)"
-ShowTip("GIF Maker running — F8 start, F9 stop, Esc cancel")
+ShowTip("GIF Maker running — F8 start, F9 stop, Ctrl+F9 editor")
 
 #InputLevel 1
 
@@ -59,6 +62,10 @@ Esc:: CancelRecording()
 #HotIf
 
 #InputLevel 0
+
+#HotIf !GM.Recording
+^F9:: OpenEditorFromHotkey()
+#HotIf
 
 OnMessage(0x201, Editor_OnDown)
 OnMessage(0x202, Editor_OnUp)
@@ -80,10 +87,14 @@ TrayCancel(*) {
         CancelRecording()
 }
 
+TrayOpenEditor(*) {
+    OpenEditorFromHotkey()
+}
+
 TrayOpenLast(*) {
     if GM.LastSessionDir && DirExist(GM.LastSessionDir) {
         Run('explorer.exe "' GM.LastSessionDir '"')
-        if !GM.Recording && !GM.EditorOpen
+        if !GM.Recording
             OpenEditor(GM.LastSessionDir)
     } else {
         ShowTip("No recording yet")
@@ -282,11 +293,45 @@ DrawClickCircle(pBitmap, cx, cy, radius, argb, penW) {
     DllCall("gdiplus\GdipDeleteGraphics", "ptr", g)
 }
 
+OpenEditorFromHotkey() {
+    if GM.Recording {
+        ShowTip("Stop or cancel recording first")
+        return
+    }
+    if GM.EditorOpen && GM.Editor && GM.Editor.gui {
+        GM.Editor.gui.Show()
+        return
+    }
+    dir := ""
+    if GM.LastSessionDir && DirExist(GM.LastSessionDir)
+        dir := GM.LastSessionDir
+    else {
+        start := DirExist(A_ScriptDir "\recordings") ? A_ScriptDir "\recordings" : A_ScriptDir
+        dir := FileSelectFolder(start, 3, "Select a GIF Maker recording folder")
+        if !dir
+            return
+    }
+    OpenEditor(dir)
+}
+
 OpenEditor(dir) {
+    if GM.Recording {
+        ShowTip("Stop or cancel recording first")
+        return
+    }
+    if !dir || !DirExist(dir) {
+        ShowTip("Folder not found")
+        return
+    }
     GM.SessionDir := dir
     LoadSession(dir)
-    if GM.Frames.Length = 0 {
-        ShowTip("No pictures in folder")
+    SplitPath(dir, &folderName)
+    if !GM.SessionName
+        GM.SessionName := folderName
+    GM.LastSessionDir := dir
+    if GM.EditorOpen && GM.Editor {
+        GM.Editor.Reload()
+        GM.Editor.gui.Show()
         return
     }
     GM.Editor := Editor()
@@ -333,12 +378,14 @@ SaveSession() {
 LoadSession(dir) {
     ini := dir "\session.ini"
     GM.Frames := []
+    SplitPath(dir, &folderName)
+    GM.SessionName := folderName
     if !FileExist(ini) {
-        loop files dir "\frame_*.png" {
-            name := A_LoopFileName
-            if InStr(name, "_original") || name = "_preview.png"
-                continue
-            GM.Frames.Push({file: name, delay: GM.DefaultDelay, anns: []})
+        loop files dir "\frame_*.png"
+            AddSessionPng(A_LoopFileName)
+        if GM.Frames.Length = 0 {
+            loop files dir "\*.png"
+                AddSessionPng(A_LoopFileName)
         }
         return
     }
@@ -347,7 +394,7 @@ LoadSession(dir) {
     loop count {
         sec := "frame" A_Index
         file := IniRead(ini, sec, "file", "")
-        if !file
+        if !file || !FileExist(dir "\" file)
             continue
         delay := ToInt(IniRead(ini, sec, "delay", GM.DefaultDelay), GM.DefaultDelay)
         anns := []
@@ -402,6 +449,12 @@ DecodeText(s) {
     return s
 }
 
+AddSessionPng(name) {
+    if InStr(name, "_original") || SubStr(name, 1, 1) = "_"
+        return
+    GM.Frames.Push({file: name, delay: GM.DefaultDelay, anns: []})
+}
+
 OriginalPath(file) {
     SplitPath(file, , , &ext, &noext)
     return GM.SessionDir "\" noext "_original." ext
@@ -447,6 +500,7 @@ class Editor {
     imgH := 1
     previewPath := ""
     previewMax := 640
+    busy := false
 
     Show() {
         this.previewPath := GM.SessionDir "\_preview.png"
@@ -481,18 +535,21 @@ class Editor {
         this.gui.Add("Button", "x840 y464 w50 h28", "White").OnEvent("Click", (*) => this.SetColor(0xFFFFFFFF))
         this.gui.Add("Button", "x896 y464 w56 h28", "Black").OnEvent("Click", (*) => this.SetColor(0xFF111111))
 
-        this.gui.Add("Button", "x672 y512 w280 h32", "Reset drawings on this frame").OnEvent("Click", (*) => this.ResetDrawings())
-        this.gui.Add("Button", "x672 y556 w280 h40", "Create GIF").OnEvent("Click", (*) => this.CreateGif())
-        this.gui.Add("Button", "x672 y604 w280 h32", "Open folder").OnEvent("Click", (*) => Run('explorer.exe "' GM.SessionDir '"'))
+        this.gui.Add("Button", "x672 y508 w280 h28", "Reset drawings on this frame").OnEvent("Click", (*) => this.ResetDrawings())
+        this.gui.Add("Button", "x672 y544 w280 h28", "Load folder").OnEvent("Click", (*) => this.PickFolder())
+        this.gui.Add("Button", "x672 y580 w280 h40", "Create GIF").OnEvent("Click", (*) => this.CreateGif())
+        this.gui.Add("Button", "x672 y628 w280 h28", "Open folder").OnEvent("Click", (*) => Run('explorer.exe "' GM.SessionDir '"'))
 
         this.status := this.gui.Add("Text", "x16 y668 w936 h24", "Arrow tool — drag on the picture. Default delay 2000 ms.")
 
-        this.RefreshList(1)
+        this.Reload()
         this.gui.Show("w976 h708")
         this.SetTool("arrow")
     }
 
     Close() {
+        SetTimer(WatchGif, 0)
+        this.busy := false
         SaveSession()
         if this.previewPath && FileExist(this.previewPath)
             try FileDelete(this.previewPath)
@@ -501,6 +558,28 @@ class Editor {
         if this.gui
             this.gui.Destroy()
         this.gui := 0
+    }
+
+    Reload() {
+        this.previewPath := GM.SessionDir "\_preview.png"
+        this.RefreshList(1)
+        SplitPath(GM.SessionDir, &folderName)
+        if GM.Frames.Length
+            this.status.Text := "Loaded " folderName " — " GM.Frames.Length " frame(s)"
+        else
+            this.status.Text := "No pictures in this folder. Use Load folder."
+    }
+
+    PickFolder() {
+        if this.busy
+            return
+        start := GM.SessionDir ? GM.SessionDir : (DirExist(A_ScriptDir "\recordings") ? A_ScriptDir "\recordings" : A_ScriptDir)
+        dir := FileSelectFolder(start, 3, "Select a GIF Maker recording folder")
+        if !dir
+            return
+        if GM.SessionDir && DirExist(GM.SessionDir)
+            SaveSession()
+        OpenEditor(dir)
     }
 
     SetTool(name) {
@@ -537,12 +616,13 @@ class Editor {
     }
 
     LoadCurrent() {
-        if this.index < 1 || this.index > GM.Frames.Length
+        if this.index < 1 || this.index > GM.Frames.Length {
+            this.pic.Value := ""
             return
+        }
         f := GM.Frames[this.index]
         this.delayEdit.Value := f.delay
         path := GM.SessionDir "\" f.file
-        BakeFrame(this.index)
         this.ShowImage(path)
     }
 
@@ -550,6 +630,8 @@ class Editor {
         if !FileExist(path)
             return
         pBmp := Gdip_LoadImage(path)
+        if !pBmp
+            return
         this.imgW := Gdip_GetWidth(pBmp)
         this.imgH := Gdip_GetHeight(pBmp)
         Gdip_DisposeImage(pBmp)
@@ -599,6 +681,9 @@ class Editor {
     }
 
     ResetDrawings() {
+        if this.index < 1 || this.index > GM.Frames.Length
+            return
+        this.pic.Value := ""
         f := GM.Frames[this.index]
         orig := OriginalPath(f.file)
         dst := GM.SessionDir "\" f.file
@@ -633,7 +718,7 @@ class Editor {
     }
 
     OnDown(hwnd) {
-        if !this.gui
+        if !this.gui || this.busy || !GM.Frames.Length
             return
         if !this.PicPos(&x, &y)
             return
@@ -689,6 +774,9 @@ class Editor {
     }
 
     AddAnn(ann) {
+        if this.index < 1 || this.index > GM.Frames.Length
+            return
+        this.pic.Value := ""
         EnsureOriginal(GM.Frames[this.index].file)
         GM.Frames[this.index].anns.Push(ann)
         SaveSession()
@@ -698,44 +786,68 @@ class Editor {
     }
 
     CreateGif() {
+        if this.busy
+            return
+        if GM.Frames.Length = 0 {
+            MsgBox("Load a folder with pictures first.", "Tutorial GIF Maker")
+            return
+        }
         this.ApplyDelay()
         SaveSession()
+        this.pic.Value := ""
+        Sleep(40)
+
+        loop GM.Frames.Length
+            BakeFrame(A_Index)
+
         jobPath := GM.SessionDir "\gif_job.json"
         outGif := GM.SessionDir "\" GM.SessionName ".gif"
         json := '{`n  "output": "' EscapeJson(outGif) '",`n  "frames": [`n'
         loop GM.Frames.Length {
             f := GM.Frames[A_Index]
-            BakeFrame(A_Index)
             path := GM.SessionDir "\" f.file
             json .= '    {"path": "' EscapeJson(path) '", "delayMs": ' f.delay '}'
             json .= (A_Index < GM.Frames.Length) ? ",`n" : "`n"
         }
         json .= "  ]`n}`n"
         try FileDelete(jobPath)
+        try FileDelete(outGif)
         FileAppend(json, jobPath, "UTF-8-RAW")
 
         ShowTip("Creating GIF")
         this.status.Text := "Creating GIF..."
         ps := A_WinDir "\System32\WindowsPowerShell\v1.0\powershell.exe"
         script := A_ScriptDir "\Create-Gif.ps1"
-        log := GM.SessionDir "\gif_log.txt"
-        cmd := Format(
-            '{1} /c ""{2}" -NoProfile -ExecutionPolicy Bypass -File "{3}" -Job "{4}" > "{5}" 2>&1"',
-            A_ComSpec, ps, script, jobPath, log)
-        this.gui.Opt("+Disabled")
-        exitCode := RunWait(cmd, GM.SessionDir, "Hide")
-        this.gui.Opt("-Disabled")
-        HideTip()
-
-        if exitCode != 0 || !FileExist(outGif) {
-            detail := FileExist(log) ? FileRead(log) : "No log."
-            MsgBox("GIF creation failed.`n`n" detail, "Tutorial GIF Maker", "Iconx")
+        cmd := Format('"{1}" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{2}" -Job "{3}"'
+            , ps, script, jobPath)
+        this.busy := true
+        GM.GifOut := outGif
+        GM.GifPid := 0
+        Run(cmd, GM.SessionDir, "Hide", &pid)
+        if !pid {
+            this.busy := false
+            this.LoadCurrent()
             this.status.Text := "GIF failed"
+            MsgBox("Could not start PowerShell to create the GIF.", "Tutorial GIF Maker", "Iconx")
             return
         }
-        this.status.Text := "GIF created: " GM.SessionName ".gif"
-        ShowTip("Creating GIF — done")
-        Run('"' outGif '"')
+        GM.GifPid := pid
+        SetTimer(WatchGif, 200)
+    }
+
+    FinishGif() {
+        this.busy := false
+        outGif := GM.GifOut
+        try FileDelete(GM.SessionDir "\gif_job.json")
+        this.LoadCurrent()
+        if FileExist(outGif) {
+            this.status.Text := "GIF created: " GM.SessionName ".gif"
+            ShowTip("Creating GIF — done")
+            Run('"' outGif '"')
+        } else {
+            this.status.Text := "GIF failed"
+            MsgBox("GIF creation failed.", "Tutorial GIF Maker", "Iconx")
+        }
     }
 }
 
@@ -745,7 +857,11 @@ BakeFrame(index, extra := 0, dest := "") {
     src := FileExist(orig) ? orig : (GM.SessionDir "\" f.file)
     if dest = ""
         dest := GM.SessionDir "\" f.file
+    if !extra && f.anns.Length = 0 && dest = src
+        return
     pBmp := Gdip_LoadImage(src)
+    if !pBmp
+        return
     anns := f.anns.Clone()
     if extra
         anns.Push(extra)
@@ -753,6 +869,17 @@ BakeFrame(index, extra := 0, dest := "") {
         DrawAnnotation(pBmp, a)
     Gdip_SavePng(pBmp, dest)
     Gdip_DisposeImage(pBmp)
+}
+
+WatchGif(*) {
+    if !GM.GifPid
+        return
+    if ProcessExist(GM.GifPid)
+        return
+    SetTimer(WatchGif, 0)
+    GM.GifPid := 0
+    if GM.Editor
+        GM.Editor.FinishGif()
 }
 
 DrawAnnotation(pBitmap, a) {
@@ -874,8 +1001,27 @@ Gdip_CreateBitmapFromHBITMAP(hbm) {
 }
 
 Gdip_LoadImage(path) {
+    f := FileOpen(path, "r")
+    if !f
+        return 0
+    size := f.Length
+    buf := Buffer(size)
+    f.RawRead(buf)
+    f.Close()
+    hMem := DllCall("GlobalAlloc", "uint", 0x0002, "uptr", size, "ptr")
+    if !hMem
+        return 0
+    p := DllCall("GlobalLock", "ptr", hMem, "ptr")
+    DllCall("RtlMoveMemory", "ptr", p, "ptr", buf, "uptr", size)
+    DllCall("GlobalUnlock", "ptr", hMem)
+    stream := 0
+    if DllCall("ole32\CreateStreamOnHGlobal", "ptr", hMem, "int", 1, "ptr*", &stream, "uint") {
+        DllCall("GlobalFree", "ptr", hMem)
+        return 0
+    }
     pBitmap := 0
-    DllCall("gdiplus\GdipLoadImageFromFile", "wstr", path, "ptr*", &pBitmap)
+    DllCall("gdiplus\GdipLoadImageFromStream", "ptr", stream, "ptr*", &pBitmap)
+    ObjRelease(stream)
     return pBitmap
 }
 
