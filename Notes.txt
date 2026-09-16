@@ -1,274 +1,319 @@
 #Requires AutoHotkey v2.0
-#SingleInstance Force
 
-; ============================================================
-; Tutorial Maker - AHK v2 + PowerShell
-; ============================================================
-
-global Recording := false
-global FrameCount := 0
-global OutputDir := ""
-global CapturePending := false
-
-; ------------------------------------------------------------
-; SETTINGS
-; ------------------------------------------------------------
-
-FrameDelay := 800        ; GIF frame duration in milliseconds
-CaptureDelay := 150      ; Wait after click before screenshot
-
-; ------------------------------------------------------------
-; START RECORDING
-; ------------------------------------------------------------
-
-F8::
+class Kitty
 {
-    global Recording, FrameCount, OutputDir
-
-    if Recording
-        return
-
-    FrameCount := 0
-
-    ; Create recording folder on Desktop
-    desktop := A_Desktop
-
-    timestamp := FormatTime(, "yyyy-MM-dd_HH-mm-ss")
-    OutputDir := desktop "\Tutorial_" timestamp
-
-    DirCreate(OutputDir)
-
-    Recording := true
-
-    ToolTip("🔴 RECORDING`n`nLeft-click to capture steps`nF9 = Finish`nEsc = Cancel")
-
-    SetTimer(HideToolTip, -2500)
-}
-
-; ------------------------------------------------------------
-; CAPTURE AFTER LEFT CLICK
-; ------------------------------------------------------------
-
-~LButton Up::
-{
-    global Recording, CapturePending, CaptureDelay
-
-    if !Recording
-        return
-
-    ; Prevent several captures from being queued at once.
-    if CapturePending
-        return
-
-    CapturePending := true
-
-    SetTimer(CaptureFrame, -CaptureDelay)
-}
-
-; ------------------------------------------------------------
-; TAKE SCREENSHOT
-; ------------------------------------------------------------
-
-CaptureFrame()
-{
-    global Recording, FrameCount, OutputDir, CapturePending
-
-    CapturePending := false
-
-    if !Recording
-        return
-
-    FrameCount++
-
-    filename := Format("{:04}.png", FrameCount)
-    filepath := OutputDir "\" filename
-
-    ; PowerShell screenshot
-    psCommand := "
-    (
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-
-$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-
-$bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
-$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-
-$graphics.CopyFromScreen(
-    $bounds.Left,
-    $bounds.Top,
-    0,
-    0,
-    $bounds.Size
-)
-
-$bitmap.Save('%FILE%', [System.Drawing.Imaging.ImageFormat]::Png)
-
-$graphics.Dispose()
-$bitmap.Dispose()
-    )"
-
-    psCommand := StrReplace(psCommand, "%FILE%", filepath)
-
-    RunWait(
-        'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "' 
-        . StrReplace(psCommand, '"', '\"')
-        . '"',
-        ,
-        "Hide"
-    )
-
-    ToolTip("🔴 Step " FrameCount " captured")
-    SetTimer(HideToolTip, -700)
-}
-
-; ------------------------------------------------------------
-; STOP + CREATE GIF
-; ------------------------------------------------------------
-
-F9::
-{
-    global Recording, FrameCount, OutputDir, FrameDelay
-
-    if !Recording
-        return
-
-    Recording := false
-
-    if FrameCount = 0
+    __New(kittenPath := "kitten.exe", listenAddress := "tcp:localhost:12345")
     {
-        ToolTip("No screenshots were captured.")
-        SetTimer(HideToolTip, -2000)
-        return
+        this.KittenPath := kittenPath
+        this.ListenAddress := listenAddress
+        this.WindowId := 0
     }
 
-    ToolTip("Creating GIF...`nPlease wait.")
+    ; ------------------------------------------------------------
+    ; Configure which Kitty window subsequent commands target.
+    ;
+    ; Example:
+    ;   kitty.UseWindow(17)
+    ; ------------------------------------------------------------
+    UseWindow(windowId)
+    {
+        if !IsInteger(windowId)
+            throw Error("Kitty window ID must be an integer.")
 
-    gifPath := OutputDir "\tutorial.gif"
+        this.WindowId := windowId
+        return this
+    }
 
-    ; PowerShell script to create animated GIF
-    psCommand := "
-    (
-Add-Type -AssemblyName System.Drawing
+    ; ------------------------------------------------------------
+    ; Clear the selected window.
+    ; ------------------------------------------------------------
+    ClearWindow()
+    {
+        this.WindowId := 0
+        return this
+    }
 
-$folder = '%FOLDER%'
-$output = '%OUTPUT%'
-$delay = %DELAY%
+    ; ------------------------------------------------------------
+    ; Return raw JSON from "kitten @ ls".
+    ;
+    ; This is useful for debugging / discovering Kitty windows.
+    ; ------------------------------------------------------------
+    ListJson()
+    {
+        return this.RunKitten(["ls"])
+    }
 
-$files = Get-ChildItem $folder -Filter '*.png' |
-    Sort-Object Name
+    ; ------------------------------------------------------------
+    ; Send text to the selected Kitty window.
+    ;
+    ; By default this method does NOT press Enter.
+    ;
+    ; Example:
+    ;   kitty.Send("hostname")
+    ;   kitty.Send("hostname`r")
+    ; ------------------------------------------------------------
+    Send(text, pressEnter := false)
+    {
+        this.RequireWindow()
 
-if ($files.Count -eq 0) {
-    exit
+        if pressEnter
+            text .= "`r"
+
+        ; -- means subsequent argument is the text.
+        return this.RunKitten([
+            "send-text",
+            "--match",
+            "id:" this.WindowId,
+            text
+        ])
+    }
+
+    ; ------------------------------------------------------------
+    ; Send a command and press Enter.
+    ;
+    ; Example:
+    ;   kitty.SendCommand("hostname")
+    ; ------------------------------------------------------------
+    SendCommand(command)
+    {
+        return this.Send(command, true)
+    }
+
+    ; ------------------------------------------------------------
+    ; Send Ctrl+C to the remote session.
+    ; ------------------------------------------------------------
+    CtrlC()
+    {
+        this.RequireWindow()
+
+        return this.RunKitten([
+            "send-key",
+            "--match",
+            "id:" this.WindowId,
+            "ctrl+c"
+        ])
+    }
+
+    ; ------------------------------------------------------------
+    ; Get text currently visible on the screen.
+    ; ------------------------------------------------------------
+    GetScreen()
+    {
+        this.RequireWindow()
+
+        return this.RunKitten([
+            "get-text",
+            "--match",
+            "id:" this.WindowId,
+            "--extent",
+            "screen"
+        ])
+    }
+
+    ; ------------------------------------------------------------
+    ; Get the output from the most recently executed command.
+    ;
+    ; This requires Kitty shell integration.
+    ; ------------------------------------------------------------
+    GetLastOutput()
+    {
+        this.RequireWindow()
+
+        return this.RunKitten([
+            "get-text",
+            "--match",
+            "id:" this.WindowId,
+            "--extent",
+            "last_cmd_output"
+        ])
+    }
+
+    ; ------------------------------------------------------------
+    ; Get all terminal text including scrollback.
+    ; ------------------------------------------------------------
+    GetAllText()
+    {
+        this.RequireWindow()
+
+        return this.RunKitten([
+            "get-text",
+            "--match",
+            "id:" this.WindowId,
+            "--extent",
+            "all"
+        ])
+    }
+
+    ; ------------------------------------------------------------
+    ; Get the currently selected text in Kitty.
+    ; ------------------------------------------------------------
+    GetSelection(clearSelection := false)
+    {
+        this.RequireWindow()
+
+        args := [
+            "get-text",
+            "--match",
+            "id:" this.WindowId,
+            "--extent",
+            "selection"
+        ]
+
+        if clearSelection
+            args.Push("--clear-selection")
+
+        return this.RunKitten(args)
+    }
+
+    ; ------------------------------------------------------------
+    ; Get screen text repeatedly until a pattern appears.
+    ;
+    ; Useful for waiting for:
+    ;
+    ;   Password:
+    ;   $
+    ;   #
+    ;   some expected output
+    ;
+    ; Returns the terminal screen when the pattern is found.
+    ; Throws on timeout.
+    ; ------------------------------------------------------------
+    WaitFor(pattern, timeoutMs := 5000, pollMs := 100)
+    {
+        this.RequireWindow()
+
+        start := A_TickCount
+
+        while (A_TickCount - start < timeoutMs)
+        {
+            text := this.GetScreen()
+
+            if RegExMatch(text, pattern)
+                return text
+
+            Sleep(pollMs)
+        }
+
+        throw TimeoutError(
+            "Timed out waiting for pattern: " pattern
+        )
+    }
+
+    ; ------------------------------------------------------------
+    ; Send a command, then wait for a regex to appear.
+    ;
+    ; Example:
+    ;
+    ;   output := kitty.CommandAndWait(
+    ;       "hostname",
+    ;       "[$#>] "
+    ;   )
+    ;
+    ; NOTE:
+    ; This is screen/prompt based. For reliable command completion,
+    ; GetLastOutput() + shell integration is preferable.
+    ; ------------------------------------------------------------
+    CommandAndWait(command, pattern, timeoutMs := 5000)
+    {
+        this.SendCommand(command)
+
+        return this.WaitFor(pattern, timeoutMs)
+    }
+
+    ; ------------------------------------------------------------
+    ; Execute an arbitrary kitten @ command.
+    ;
+    ; Example:
+    ;
+    ;   kitty.RunKitten([
+    ;       "get-text",
+    ;       "--match", "id:17",
+    ;       "--extent", "screen"
+    ;   ])
+    ; ------------------------------------------------------------
+    RunKitten(args)
+    {
+        command := this.BuildCommand(args)
+
+        shell := ComObject("WScript.Shell")
+
+        exec := shell.Exec(command)
+
+        stdout := exec.StdOut.ReadAll()
+        stderr := exec.StdErr.ReadAll()
+
+        exitCode := exec.ExitCode
+
+        if exitCode != 0
+        {
+            throw Error(
+                "Kitty remote-control command failed.`n`n"
+                "Command:`n"
+                command
+                "`n`nError:`n"
+                stderr
+            )
+        }
+
+        return stdout
+    }
+
+    ; ------------------------------------------------------------
+    ; Internal: construct:
+    ;
+    ; kitten @ --to tcp:localhost:12345 command ...
+    ; ------------------------------------------------------------
+    BuildCommand(args)
+    {
+        command := this.Quote(this.KittenPath)
+        command .= " @"
+        command .= " --to " this.Quote(this.ListenAddress)
+
+        for arg in args
+            command .= " " this.Quote(arg)
+
+        return command
+    }
+
+    ; ------------------------------------------------------------
+    ; Windows command-line quoting.
+    ; ------------------------------------------------------------
+    Quote(value)
+    {
+        ; Empty argument
+        if value = ""
+            return '""'
+
+        ; Quote arguments containing whitespace or shell-sensitive chars.
+        if RegExMatch(value, '[\s"&|<>^]') || InStr(value, "'")
+        {
+            ; Escape embedded double quotes for Windows command line.
+            value := StrReplace(value, '"', '\"')
+            return '"' value '"'
+        }
+
+        return value
+    }
+
+    ; ------------------------------------------------------------
+    ; Make sure a Kitty window has been selected.
+    ; ------------------------------------------------------------
+    RequireWindow()
+    {
+        if !this.WindowId
+            throw Error(
+                "No Kitty window selected.`n"
+                "Call kitty.UseWindow(windowId) first."
+            )
+    }
 }
 
-$images = @()
 
-foreach ($file in $files) {
-    $images += [System.Drawing.Image]::FromFile($file.FullName)
-}
-
-$encoder = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
-    Where-Object { $_.MimeType -eq 'image/gif' }
-
-$first = $images[0]
-
-$propertyItem = [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject(
-    [System.Drawing.Imaging.PropertyItem]
-)
-
-$propertyItem.Id = 0x5100
-$propertyItem.Type = 4
-$propertyItem.Len = 4
-
-$delayValue = [Math]::Max(1, [Math]::Round($delay / 10))
-
-$bytes = New-Object byte[] 4
-[BitConverter]::GetBytes([int]$delayValue).CopyTo($bytes, 0)
-$propertyItem.Value = $bytes
-
-$first.SetPropertyItem($propertyItem)
-
-$encoderParams = New-Object System.Drawing.Imaging.EncoderParameters 1
-$encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter(
-    [System.Drawing.Imaging.Encoder]::SaveFlag,
-    [int][System.Drawing.Imaging.EncoderValue]::MultiFrame
-)
-
-$first.Save($output, $encoder, $encoderParams)
-
-$encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter(
-    [System.Drawing.Imaging.Encoder]::SaveFlag,
-    [int][System.Drawing.Imaging.EncoderValue]::FrameDimensionTime
-)
-
-foreach ($image in $images[1..($images.Count - 1)]) {
-
-    $image.SetPropertyItem($propertyItem)
-
-    $first.SaveAdd($image, $encoderParams)
-}
-
-$encoderParams.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter(
-    [System.Drawing.Imaging.Encoder]::SaveFlag,
-    [int][System.Drawing.Imaging.EncoderValue]::Flush
-)
-
-$first.SaveAdd($encoderParams)
-
-foreach ($image in $images) {
-    $image.Dispose()
-}
-
-$first.Dispose()
-    )"
-
-    psCommand := StrReplace(psCommand, "%FOLDER%", OutputDir)
-    psCommand := StrReplace(psCommand, "%OUTPUT%", gifPath)
-    psCommand := StrReplace(psCommand, "%DELAY%", FrameDelay)
-
-    RunWait(
-        'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "'
-        . StrReplace(psCommand, '"', '\"')
-        . '"',
-        ,
-        "Hide"
-    )
-
-    ToolTip(
-        "✅ Tutorial complete!`n`n"
-        . FrameCount " frames captured.`n`n"
-        . gifPath
-    )
-
-    SetTimer(HideToolTip, -4000)
-
-    ; Open the recording folder
-    Run(OutputDir)
-}
-
-; ------------------------------------------------------------
-; CANCEL
-; ------------------------------------------------------------
-
-Esc::
+class TimeoutError extends Error
 {
-    global Recording
-
-    if !Recording
-        return
-
-    Recording := false
-
-    ToolTip("Recording cancelled.")
-    SetTimer(HideToolTip, -1500)
-}
-
-; ------------------------------------------------------------
-; TOOLTIP
-; ------------------------------------------------------------
-
-HideToolTip()
-{
-    ToolTip()
+    __New(message)
+    {
+        super.__New(message)
+        this.Name := "TimeoutError"
+    }
 }
