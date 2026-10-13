@@ -1,26 +1,8 @@
-#Requires AutoHotkey v2.0
-#Include <UIA>
-
-; Example
-SelectComboItem("ahk_exe myapp.exe", "Country", "Canada")
-
-SelectComboItem(winTitle, comboName, itemText, matchMode := 3) {
-    root := UIA.ElementFromHandle(winTitle)
-    cb := root.WaitElement({Type: 50003, Name: comboName}, 3000)  ; 50003 = ComboBox
-    if !cb
-        throw Error("ComboBox not found")
-
-    cb.Expand()          ; many combos only create their list items once expanded
-    Sleep 100
-
-    ; matchMode: 1 = starts with, 2 = contains, 3 = exact, "RegEx" = pattern
-    item := cb.WaitElement({Type: "ListItem", Name: itemText, mm: matchMode}, 2000)
-    if !item
-        throw Error("Item '" itemText "' not found")
-
-    try item.ScrollIntoView()
-    try item.Select()    ; SelectionItem pattern
-    catch
-        item.Click()     ; fallback for combos without SelectionItem support
-    try cb.Collapse()
+GetState(addr) {
+    if RegExMatch(addr, "\b([A-Z]{2}),?\s+\d{5}[\d-]*\s*$", &m)
+        return m[1]
+    return ""
 }
+
+MsgBox GetState("123 state st, FL 567763")             ; FL
+MsgBox GetState("334 main st, apt 114, MO, 58373-5671") ; MO
