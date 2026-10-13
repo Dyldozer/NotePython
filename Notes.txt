@@ -1,319 +1,87 @@
 #Requires AutoHotkey v2.0
+#SingleInstance Force
 
-class Kitty
-{
-    __New(kittenPath := "kitten.exe", listenAddress := "tcp:localhost:12345")
-    {
-        this.KittenPath := kittenPath
-        this.ListenAddress := listenAddress
-        this.WindowId := 0
+; ===== CONFIG =====
+; Capture group 1 must be the number. Examples:
+;   "\b(\d{5,})\b"                      -> first standalone number with 5+ digits
+;   "i)Order\s*#?\s*:?\s*(\d+)"         -> number after the label "Order"
+;   "i)Ticket\s*(?:ID|No\.?)?\s*:?\s*([A-Z]{0,3}\d{4,})" -> IDs like INC123456
+NUMBER_PATTERN := "\b(\d{5,})\b"
+SEARCH_SCOPE   := 1      ; 0=current folder, 1=all mail folders, 2=all Outlook items, 3=subfolders, 4=current store
+USE_QUOTES     := true   ; wrap the number in quotes for an exact-term Instant Search
+
+; ===== HOTKEYS =====
+^!o:: FindInOutlook(GetNumberFromPage(false))   ; Ctrl+Alt+O: whole page
+^!p:: FindInOutlook(GetNumberFromPage(true))    ; Ctrl+Alt+P: selected text only
+
+; ----- Read the page via the clipboard, then RegEx -----
+GetNumberFromPage(selectionOnly := false) {
+    global NUMBER_PATTERN
+    if !WinActive("ahk_exe chrome.exe") && !WinActive("ahk_exe msedge.exe") {
+        MsgBox "Activate the Chrome/Edge tab first.", "Find in Outlook", "Icon!"
+        return ""
     }
-
-    ; ------------------------------------------------------------
-    ; Configure which Kitty window subsequent commands target.
-    ;
-    ; Example:
-    ;   kitty.UseWindow(17)
-    ; ------------------------------------------------------------
-    UseWindow(windowId)
-    {
-        if !IsInteger(windowId)
-            throw Error("Kitty window ID must be an integer.")
-
-        this.WindowId := windowId
-        return this
+    saved := ClipboardAll()            ; back up the user's clipboard
+    A_Clipboard := ""                  ; clear it so ClipWait can detect new data
+    if selectionOnly
+        Send "^c"
+    else {
+        ; Click into the page body first if the address bar might have focus.
+        Send "^a"
+        Sleep 100
+        Send "^c"
     }
-
-    ; ------------------------------------------------------------
-    ; Clear the selected window.
-    ; ------------------------------------------------------------
-    ClearWindow()
-    {
-        this.WindowId := 0
-        return this
+    ok := ClipWait(2)
+    text := ok ? A_Clipboard : ""
+    if !selectionOnly
+        Send "{Click}"                 ; optional: clears the select-all highlight (clicks at mouse pos)
+    A_Clipboard := saved               ; restore the clipboard
+    saved := ""
+    if !ok || text = "" {
+        MsgBox "Couldn't copy any text from the page.", "Find in Outlook", "Icon!"
+        return ""
     }
-
-    ; ------------------------------------------------------------
-    ; Return raw JSON from "kitten @ ls".
-    ;
-    ; This is useful for debugging / discovering Kitty windows.
-    ; ------------------------------------------------------------
-    ListJson()
-    {
-        return this.RunKitten(["ls"])
+    if !RegExMatch(text, NUMBER_PATTERN, &m) {
+        MsgBox "No number matching the pattern was found on the page.", "Find in Outlook", "Icon!"
+        return ""
     }
-
-    ; ------------------------------------------------------------
-    ; Send text to the selected Kitty window.
-    ;
-    ; By default this method does NOT press Enter.
-    ;
-    ; Example:
-    ;   kitty.Send("hostname")
-    ;   kitty.Send("hostname`r")
-    ; ------------------------------------------------------------
-    Send(text, pressEnter := false)
-    {
-        this.RequireWindow()
-
-        if pressEnter
-            text .= "`r"
-
-        ; -- means subsequent argument is the text.
-        return this.RunKitten([
-            "send-text",
-            "--match",
-            "id:" this.WindowId,
-            text
-        ])
-    }
-
-    ; ------------------------------------------------------------
-    ; Send a command and press Enter.
-    ;
-    ; Example:
-    ;   kitty.SendCommand("hostname")
-    ; ------------------------------------------------------------
-    SendCommand(command)
-    {
-        return this.Send(command, true)
-    }
-
-    ; ------------------------------------------------------------
-    ; Send Ctrl+C to the remote session.
-    ; ------------------------------------------------------------
-    CtrlC()
-    {
-        this.RequireWindow()
-
-        return this.RunKitten([
-            "send-key",
-            "--match",
-            "id:" this.WindowId,
-            "ctrl+c"
-        ])
-    }
-
-    ; ------------------------------------------------------------
-    ; Get text currently visible on the screen.
-    ; ------------------------------------------------------------
-    GetScreen()
-    {
-        this.RequireWindow()
-
-        return this.RunKitten([
-            "get-text",
-            "--match",
-            "id:" this.WindowId,
-            "--extent",
-            "screen"
-        ])
-    }
-
-    ; ------------------------------------------------------------
-    ; Get the output from the most recently executed command.
-    ;
-    ; This requires Kitty shell integration.
-    ; ------------------------------------------------------------
-    GetLastOutput()
-    {
-        this.RequireWindow()
-
-        return this.RunKitten([
-            "get-text",
-            "--match",
-            "id:" this.WindowId,
-            "--extent",
-            "last_cmd_output"
-        ])
-    }
-
-    ; ------------------------------------------------------------
-    ; Get all terminal text including scrollback.
-    ; ------------------------------------------------------------
-    GetAllText()
-    {
-        this.RequireWindow()
-
-        return this.RunKitten([
-            "get-text",
-            "--match",
-            "id:" this.WindowId,
-            "--extent",
-            "all"
-        ])
-    }
-
-    ; ------------------------------------------------------------
-    ; Get the currently selected text in Kitty.
-    ; ------------------------------------------------------------
-    GetSelection(clearSelection := false)
-    {
-        this.RequireWindow()
-
-        args := [
-            "get-text",
-            "--match",
-            "id:" this.WindowId,
-            "--extent",
-            "selection"
-        ]
-
-        if clearSelection
-            args.Push("--clear-selection")
-
-        return this.RunKitten(args)
-    }
-
-    ; ------------------------------------------------------------
-    ; Get screen text repeatedly until a pattern appears.
-    ;
-    ; Useful for waiting for:
-    ;
-    ;   Password:
-    ;   $
-    ;   #
-    ;   some expected output
-    ;
-    ; Returns the terminal screen when the pattern is found.
-    ; Throws on timeout.
-    ; ------------------------------------------------------------
-    WaitFor(pattern, timeoutMs := 5000, pollMs := 100)
-    {
-        this.RequireWindow()
-
-        start := A_TickCount
-
-        while (A_TickCount - start < timeoutMs)
-        {
-            text := this.GetScreen()
-
-            if RegExMatch(text, pattern)
-                return text
-
-            Sleep(pollMs)
-        }
-
-        throw TimeoutError(
-            "Timed out waiting for pattern: " pattern
-        )
-    }
-
-    ; ------------------------------------------------------------
-    ; Send a command, then wait for a regex to appear.
-    ;
-    ; Example:
-    ;
-    ;   output := kitty.CommandAndWait(
-    ;       "hostname",
-    ;       "[$#>] "
-    ;   )
-    ;
-    ; NOTE:
-    ; This is screen/prompt based. For reliable command completion,
-    ; GetLastOutput() + shell integration is preferable.
-    ; ------------------------------------------------------------
-    CommandAndWait(command, pattern, timeoutMs := 5000)
-    {
-        this.SendCommand(command)
-
-        return this.WaitFor(pattern, timeoutMs)
-    }
-
-    ; ------------------------------------------------------------
-    ; Execute an arbitrary kitten @ command.
-    ;
-    ; Example:
-    ;
-    ;   kitty.RunKitten([
-    ;       "get-text",
-    ;       "--match", "id:17",
-    ;       "--extent", "screen"
-    ;   ])
-    ; ------------------------------------------------------------
-    RunKitten(args)
-    {
-        command := this.BuildCommand(args)
-
-        shell := ComObject("WScript.Shell")
-
-        exec := shell.Exec(command)
-
-        stdout := exec.StdOut.ReadAll()
-        stderr := exec.StdErr.ReadAll()
-
-        exitCode := exec.ExitCode
-
-        if exitCode != 0
-        {
-            throw Error(
-                "Kitty remote-control command failed.`n`n"
-                "Command:`n"
-                command
-                "`n`nError:`n"
-                stderr
-            )
-        }
-
-        return stdout
-    }
-
-    ; ------------------------------------------------------------
-    ; Internal: construct:
-    ;
-    ; kitten @ --to tcp:localhost:12345 command ...
-    ; ------------------------------------------------------------
-    BuildCommand(args)
-    {
-        command := this.Quote(this.KittenPath)
-        command .= " @"
-        command .= " --to " this.Quote(this.ListenAddress)
-
-        for arg in args
-            command .= " " this.Quote(arg)
-
-        return command
-    }
-
-    ; ------------------------------------------------------------
-    ; Windows command-line quoting.
-    ; ------------------------------------------------------------
-    Quote(value)
-    {
-        ; Empty argument
-        if value = ""
-            return '""'
-
-        ; Quote arguments containing whitespace or shell-sensitive chars.
-        if RegExMatch(value, '[\s"&|<>^]') || InStr(value, "'")
-        {
-            ; Escape embedded double quotes for Windows command line.
-            value := StrReplace(value, '"', '\"')
-            return '"' value '"'
-        }
-
-        return value
-    }
-
-    ; ------------------------------------------------------------
-    ; Make sure a Kitty window has been selected.
-    ; ------------------------------------------------------------
-    RequireWindow()
-    {
-        if !this.WindowId
-            throw Error(
-                "No Kitty window selected.`n"
-                "Call kitty.UseWindow(windowId) first."
-            )
-    }
+    return m[1]
 }
 
-
-class TimeoutError extends Error
-{
-    __New(message)
-    {
-        super.__New(message)
-        this.Name := "TimeoutError"
+; ----- Run an Instant Search in Outlook Classic via COM -----
+FindInOutlook(num) {
+    global SEARCH_SCOPE, USE_QUOTES
+    if num = ""
+        return
+    if !ProcessExist("OUTLOOK.EXE") {
+        msg := ProcessExist("olk.exe")
+            ? "Only the NEW Outlook is running. It has no COM support; switch to classic Outlook."
+            : "Outlook (classic) is not running. Start it and try again."
+        MsgBox msg, "Find in Outlook", "Icon!"
+        return
+    }
+    try ol := ComObjActive("Outlook.Application")
+    catch as e {
+        MsgBox "Couldn't attach to Outlook (" e.Message ").`n"
+             . "Check that AHK and Outlook run at the same privilege level (neither as admin).",
+             "Find in Outlook", "Icon!"
+        return
+    }
+    try {
+        inbox := ol.Session.GetDefaultFolder(6)      ; 6 = olFolderInbox
+        exp := ol.ActiveExplorer()
+        if !IsObject(exp) {                          ; no main window open
+            inbox.Display()
+            exp := ol.ActiveExplorer()
+        }
+        exp.CurrentFolder := inbox                   ; scope 1 = folders of the *mail* type
+        WinActivate "ahk_exe OUTLOOK.EXE"
+        exp.Activate()
+        query := USE_QUOTES ? '"' num '"' : num      ; e.g. "123456" or subject:123456
+        exp.Search(query, SEARCH_SCOPE)
+        ToolTip "Outlook: searching for " num
+        SetTimer () => ToolTip(), -2500
+    } catch as e {
+        MsgBox "Outlook search failed: " e.Message, "Find in Outlook", "Icon!"
     }
 }
