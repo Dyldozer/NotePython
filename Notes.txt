@@ -1,87 +1,26 @@
 #Requires AutoHotkey v2.0
-#SingleInstance Force
+#Include <UIA>
 
-; ===== CONFIG =====
-; Capture group 1 must be the number. Examples:
-;   "\b(\d{5,})\b"                      -> first standalone number with 5+ digits
-;   "i)Order\s*#?\s*:?\s*(\d+)"         -> number after the label "Order"
-;   "i)Ticket\s*(?:ID|No\.?)?\s*:?\s*([A-Z]{0,3}\d{4,})" -> IDs like INC123456
-NUMBER_PATTERN := "\b(\d{5,})\b"
-SEARCH_SCOPE   := 1      ; 0=current folder, 1=all mail folders, 2=all Outlook items, 3=subfolders, 4=current store
-USE_QUOTES     := true   ; wrap the number in quotes for an exact-term Instant Search
+; Example
+SelectComboItem("ahk_exe myapp.exe", "Country", "Canada")
 
-; ===== HOTKEYS =====
-^!o:: FindInOutlook(GetNumberFromPage(false))   ; Ctrl+Alt+O: whole page
-^!p:: FindInOutlook(GetNumberFromPage(true))    ; Ctrl+Alt+P: selected text only
+SelectComboItem(winTitle, comboName, itemText, matchMode := 3) {
+    root := UIA.ElementFromHandle(winTitle)
+    cb := root.WaitElement({Type: 50003, Name: comboName}, 3000)  ; 50003 = ComboBox
+    if !cb
+        throw Error("ComboBox not found")
 
-; ----- Read the page via the clipboard, then RegEx -----
-GetNumberFromPage(selectionOnly := false) {
-    global NUMBER_PATTERN
-    if !WinActive("ahk_exe chrome.exe") && !WinActive("ahk_exe msedge.exe") {
-        MsgBox "Activate the Chrome/Edge tab first.", "Find in Outlook", "Icon!"
-        return ""
-    }
-    saved := ClipboardAll()            ; back up the user's clipboard
-    A_Clipboard := ""                  ; clear it so ClipWait can detect new data
-    if selectionOnly
-        Send "^c"
-    else {
-        ; Click into the page body first if the address bar might have focus.
-        Send "^a"
-        Sleep 100
-        Send "^c"
-    }
-    ok := ClipWait(2)
-    text := ok ? A_Clipboard : ""
-    if !selectionOnly
-        Send "{Click}"                 ; optional: clears the select-all highlight (clicks at mouse pos)
-    A_Clipboard := saved               ; restore the clipboard
-    saved := ""
-    if !ok || text = "" {
-        MsgBox "Couldn't copy any text from the page.", "Find in Outlook", "Icon!"
-        return ""
-    }
-    if !RegExMatch(text, NUMBER_PATTERN, &m) {
-        MsgBox "No number matching the pattern was found on the page.", "Find in Outlook", "Icon!"
-        return ""
-    }
-    return m[1]
-}
+    cb.Expand()          ; many combos only create their list items once expanded
+    Sleep 100
 
-; ----- Run an Instant Search in Outlook Classic via COM -----
-FindInOutlook(num) {
-    global SEARCH_SCOPE, USE_QUOTES
-    if num = ""
-        return
-    if !ProcessExist("OUTLOOK.EXE") {
-        msg := ProcessExist("olk.exe")
-            ? "Only the NEW Outlook is running. It has no COM support; switch to classic Outlook."
-            : "Outlook (classic) is not running. Start it and try again."
-        MsgBox msg, "Find in Outlook", "Icon!"
-        return
-    }
-    try ol := ComObjActive("Outlook.Application")
-    catch as e {
-        MsgBox "Couldn't attach to Outlook (" e.Message ").`n"
-             . "Check that AHK and Outlook run at the same privilege level (neither as admin).",
-             "Find in Outlook", "Icon!"
-        return
-    }
-    try {
-        inbox := ol.Session.GetDefaultFolder(6)      ; 6 = olFolderInbox
-        exp := ol.ActiveExplorer()
-        if !IsObject(exp) {                          ; no main window open
-            inbox.Display()
-            exp := ol.ActiveExplorer()
-        }
-        exp.CurrentFolder := inbox                   ; scope 1 = folders of the *mail* type
-        WinActivate "ahk_exe OUTLOOK.EXE"
-        exp.Activate()
-        query := USE_QUOTES ? '"' num '"' : num      ; e.g. "123456" or subject:123456
-        exp.Search(query, SEARCH_SCOPE)
-        ToolTip "Outlook: searching for " num
-        SetTimer () => ToolTip(), -2500
-    } catch as e {
-        MsgBox "Outlook search failed: " e.Message, "Find in Outlook", "Icon!"
-    }
+    ; matchMode: 1 = starts with, 2 = contains, 3 = exact, "RegEx" = pattern
+    item := cb.WaitElement({Type: "ListItem", Name: itemText, mm: matchMode}, 2000)
+    if !item
+        throw Error("Item '" itemText "' not found")
+
+    try item.ScrollIntoView()
+    try item.Select()    ; SelectionItem pattern
+    catch
+        item.Click()     ; fallback for combos without SelectionItem support
+    try cb.Collapse()
 }
